@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/index-tts/segment.schema.json",
+  "title": "IndexTTS Segment Record (JSONL line)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["text"],
+  "properties": {
+    "segment_id": {
+      "description": "Unique identifier for the segment within a chapter/book (string or integer).",
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "integer", "minimum": 0 }
+      ]
+    },
+    "chapter_id": {
+      "description": "Optional chapter identifier.",
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "integer", "minimum": 0 }
+      ]
+    },
+    "text": {
+      "description": "The text to synthesize for this segment (already normalized).",
+      "type": "string",
+      "minLength": 1
+    },
+    "segment_type": {
+      "description": "Optional label used for pacing or downstream logic.",
+      "type": "string",
+      "enum": ["narration", "dialogue", "heading", "scene_break", "footnote", "other"]
+    },
+
+    "voices_dir": {
+      "description": "Optional per-segment override for voices directory (normally supplied as a global CLI arg).",
+      "type": "string",
+      "minLength": 1
+    },
+    "voice": {
+      "description": "Voice name resolved as {voices_dir}/{voice}.wav if spk_audio_prompt is not provided.",
+      "type": "string",
+      "minLength": 1
+    },
+    "spk_audio_prompt": {
+      "description": "Path to speaker prompt audio (overrides voice/voices_dir).",
+      "type": "string",
+      "minLength": 1
+    },
+
+    "emo_alpha": {
+      "description": "Emotion influence strength (0..1).",
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.0
+    },
+    "emo_vector": {
+      "description": "Emotion vector of 8 floats: [happy, angry, sad, afraid, disgusted, melancholic, surprised, calm].",
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": { "type": "number" }
+    },
+    "emo_text": {
+      "description": "Emotion description used when use_emo_text=true (or auto-enabled if present).",
+      "type": "string",
+      "minLength": 1
+    },
+    "use_emo_text": {
+      "description": "Tri-state is handled by the API; in JSON we just allow boolean if specified.",
+      "type": "boolean"
+    },
+    "emo_audio_prompt": {
+      "description": "Path to emotion reference audio (optional).",
+      "type": "string",
+      "minLength": 1
+    },
+
+    "seed": {
+      "description": "Optional deterministic seed.",
+      "type": "integer"
+    },
+    "use_random": {
+      "description": "Enable randomness (discouraged for audiobooks).",
+      "type": "boolean",
+      "default": false
+    },
+
+    "pause_before_ms": {
+      "description": "Silence inserted before this segment when assembling the chapter audio.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 60000,
+      "default": 0
+    },
+    "pause_after_ms": {
+      "description": "Silence inserted after this segment when assembling the chapter audio.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 60000,
+      "default": 0
+    },
+
+    "sample_rate": {
+      "description": "Output sample rate (Hz). Usually supplied globally; per-segment override allowed.",
+      "type": "integer",
+      "minimum": 8000,
+      "maximum": 192000
+    },
+    "audio_format": {
+      "description": "Output audio format.",
+      "type": "string",
+      "enum": ["wav", "pcm"]
+    },
+    "return_timestamps": {
+      "description": "If true, include timestamps (if supported) in per-segment outputs (renderer may write sidecar JSON).",
+      "type": "boolean",
+      "default": false
+    },
+
+    "metadata": {
+      "description": "Free-form metadata for upstream/downstream tooling (not used by TTS).",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+
+  "allOf": [
+    {
+      "description": "If emo_vector is present, it should take precedence; schema just ensures it's well-formed.",
+      "if": { "required": ["emo_vector"] },
+      "then": {}
+    },
+    {
+      "description": "Encourage at least one speaker source (voice or spk_audio_prompt) but don't require it to preserve legacy defaults.",
+      "if": { "not": { "required": ["spk_audio_prompt"] } },
+      "then": {}
+    }
+  ]
+}
+

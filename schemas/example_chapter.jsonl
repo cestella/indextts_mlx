@@ -1,0 +1,6 @@
+{"segment_id": 1, "text": "Chapter One. The Morning Light.", "segment_type": "heading", "pause_after_ms": 800}
+{"segment_id": 2, "text": "The sun had barely crested the hills when Eleanor stepped onto the porch.", "segment_type": "narration", "pause_after_ms": 200}
+{"segment_id": 3, "text": "Good morning, she called out. Is anyone there?", "segment_type": "dialogue", "voice": "Eleanor", "emo_vector": [0.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.1], "emo_alpha": 0.4, "pause_after_ms": 300}
+{"segment_id": 4, "text": "Silence answered her.", "segment_type": "narration", "pause_after_ms": 600}
+{"segment_id": 5, "text": "Scene break.", "segment_type": "scene_break", "pause_before_ms": 1000, "pause_after_ms": 1000}
+{"segment_id": 6, "text": "Later that evening, the letter arrived.", "segment_type": "narration", "seed": 42}

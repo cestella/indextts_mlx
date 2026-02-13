@@ -28,29 +28,78 @@ python3.11 -m venv venv_parity && venv_parity/bin/pip install -e ".[parity]"
 ### Tests
 
 ```bash
-pytest tests/ -v                         # all 22 tests
+pytest tests/ -v                         # all tests
 pytest tests/test_pipeline.py -v        # end-to-end only
+pytest tests/test_voices.py -v          # voice/emo logic only (no weights needed)
 pytest tests/ -v -k "not parity"        # skip torchaudio/transformers tests
 pytest tests/ -x                        # stop on first failure
 ```
 
-All tests are non-skipping: they fail if weights or reference audio are missing.
+`tests/test_voices.py` is fast (no model loading). All other tests require weights + reference audio.
 
 Session-scoped fixtures in `tests/conftest.py` load models once per pytest session. The first run is slow (~30 s model loading); subsequent tests in the same session are fast.
 
 ### CLI
 
 ```bash
-indextts-tts "Hello world." --voice ~/audiobooks/voices/prunella_scales.wav --play
-indextts-tts "Hello world." --voice ~/audiobooks/voices/prunella_scales.wav --out /tmp/out.wav --steps 25
+# Direct audio file (new: --spk-audio-prompt)
+indextts-tts "Hello world." --spk-audio-prompt ~/audiobooks/voices/prunella_scales.wav --play
+
+# Voices directory
+indextts-tts "Hello world." --voices-dir ~/audiobooks/voices --voice prunella_scales --out /tmp/out.wav
+
+# List available voices
+indextts-tts --list-voices --voices-dir ~/audiobooks/voices
+
+# Emotion vector
+indextts-tts "What a day!" --spk-audio-prompt speaker.wav \
+    --emo-vector "0.8,0,0,0,0,0,0.2,0" --emo-alpha 0.5
+
+# Deterministic audiobook render
+indextts-tts "Hello world." --spk-audio-prompt speaker.wav --seed 42 --no-use-random
+
+# JSONL chapter render
+indextts-tts --segments-jsonl chapter01.jsonl --voices-dir ~/voices --out chapter01.wav
+
+# Legacy --voice still works (treated as direct path if no --voices-dir)
+indextts-tts "Hello." --voice ~/audiobooks/voices/prunella_scales.wav
 ```
 
 ### Python
 
 ```python
 from indextts_mlx import IndexTTS2
+
 tts = IndexTTS2()
-audio = tts.synthesize("Hello.", reference_audio="~/audiobooks/voices/prunella_scales.wav")
+
+# New API: spk_audio_prompt
+audio = tts.synthesize("Hello.", spk_audio_prompt="speaker.wav")
+
+# Voices directory
+audio = tts.synthesize("Hello.", voices_dir="~/voices", voice="Emma")
+
+# Backward-compat: reference_audio still works
+audio = tts.synthesize("Hello.", reference_audio="speaker.wav")
+
+# Deterministic
+audio = tts.synthesize("Hello.", spk_audio_prompt="speaker.wav", seed=0, use_random=False)
+```
+
+### JSONL chapter rendering
+
+```python
+from indextts_mlx import render_segments_jsonl, IndexTTS2
+
+tts = IndexTTS2()
+render_segments_jsonl(
+    "chapter01.jsonl",
+    "chapter01.wav",
+    tts=tts,
+    voices_dir="~/audiobooks/voices",
+    seed=0,
+    cfm_steps=25,
+    cache_dir="/tmp/tts_cache",
+)
 ```
 
 ### PyTorch parity comparison
@@ -125,6 +174,8 @@ indextts_mlx/
 ├── __init__.py           exports: IndexTTS2, WeightsConfig, synthesize
 ├── config.py             WeightsConfig dataclass, env var defaults, validate()
 ├── pipeline.py           IndexTTS2.__init__ + synthesize()
+├── voices.py             resolve_voice(), list_voices(), parse_emo_vector()
+├── renderer.py           render_segments_jsonl() — JSONL chapter renderer
 │
 ├── models/               MLX model definitions (no weight loading here)
 │   ├── gpt.py            UnifiedVoice: conformer + perceiver + GPT2 + mel head
@@ -163,6 +214,32 @@ indextts_mlx/
 ---
 
 ## Key design decisions
+
+### Speaker + emotion resolution rules
+
+Speaker priority (highest → lowest): `spk_audio_prompt` > `voice + voices_dir` > error.
+
+`reference_audio` is a backward-compat alias for `spk_audio_prompt` (positional arg → keyword). If both are supplied, `spk_audio_prompt` wins with a warning.
+
+`voice` without `voices_dir` is treated as a direct file path (backward compat for the old `--voice PATH` CLI flag).
+
+Emotion priority: `emo_vector` > `emo_text` (when both given, `emo_vector` wins and `emo_text` is cleared with a warning). `use_emo_text` is tri-state (None = auto: enabled when `emo_text` is provided).
+
+### Determinism
+
+`use_random=False` (default) seeds both `numpy` and `mlx.random` with `seed` (default 0). This makes top-k sampling and CFM diffusion noise deterministic — important for audiobook production where re-renders should be identical.
+
+Set `use_random=True` to restore stochastic behavior (appropriate for interactive one-shot use).
+
+### Voices directory
+
+`voices.py` provides `resolve_voice(dir, name)` and `list_voices(dir)`. Voice names are `.wav` file stems. Case-sensitive match first; case-insensitive fallback with a warning (handles `Emma` vs `emma`).
+
+### JSONL segment schema
+
+`schemas/segment.schema.json` defines the per-segment record format. Every field except `text` is optional and overrides the global render defaults. Fields: `text`, `voice`, `voices_dir`, `spk_audio_prompt`, `emo_alpha`, `emo_vector`, `emo_text`, `use_emo_text`, `emo_audio_prompt`, `seed`, `use_random`, `pause_before_ms`, `pause_after_ms`, `sample_rate`, `audio_format`.
+
+`renderer.py` caches per-segment audio in `cache_dir/` keyed on a SHA-256 of all synthesis params. Re-running with the same JSONL and params is free after the first render.
 
 ### S2Mel config is hardcoded
 

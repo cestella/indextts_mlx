@@ -1,12 +1,13 @@
 """IndexTTS-2 MLX inference pipeline."""
 from __future__ import annotations
 
+import warnings
 import numpy as np
 import mlx.core as mx
 import soundfile as sf
 import librosa
 from pathlib import Path
-from typing import Union
+from typing import List, Optional, Union
 
 from .config import WeightsConfig
 from .models.gpt import UnifiedVoice, create_unifiedvoice
@@ -23,7 +24,11 @@ from .loaders.bigvgan_loader import load_bigvgan_model
 from .audio.kaldi_fbank import compute_kaldi_fbank_mlx
 from .audio.seamless_fbank import compute_seamless_fbank
 from .audio.mel import compute_mel_s2mel
+from .voices import resolve_voice, parse_emo_vector
 from sentencepiece import SentencePieceProcessor
+
+# Output sample rate
+OUTPUT_SAMPLE_RATE = 22050
 
 
 def _sample_top_k(logits: mx.array, temperature: float = 0.8, top_k: int = 200) -> int:
@@ -43,12 +48,45 @@ def _sample_top_k(logits: mx.array, temperature: float = 0.8, top_k: int = 200) 
     return int(np.random.choice(len(probs_np), p=probs_np / probs_np.sum()))
 
 
+def _resolve_speaker(
+    voices_dir: Optional[str | Path],
+    voice: Optional[str],
+    spk_audio_prompt: Optional[Union[str, Path]],
+) -> Optional[str | Path]:
+    """Resolve the final speaker prompt path from the three speaker sources.
+
+    Priority: spk_audio_prompt > voice (resolved via voices_dir)
+    """
+    if spk_audio_prompt is not None:
+        if voice is not None:
+            warnings.warn(
+                "Both 'voice' and 'spk_audio_prompt' were provided; "
+                "'spk_audio_prompt' takes precedence.",
+                stacklevel=4,
+            )
+        return spk_audio_prompt
+
+    if voice is not None:
+        if voices_dir is None:
+            # voice with no voices_dir: treat voice as a direct file path
+            p = Path(voice)
+            if not p.exists():
+                raise FileNotFoundError(
+                    f"Voice path '{voice}' does not exist. "
+                    "Provide --voices-dir to use voice names, or pass a full path."
+                )
+            return p
+        return resolve_voice(voices_dir, voice)
+
+    return None
+
+
 class IndexTTS2:
     """IndexTTS-2 text-to-speech pipeline using pure MLX inference.
-    
+
     Usage:
         tts = IndexTTS2()
-        audio = tts.synthesize("Hello world", "reference.wav")
+        audio = tts.synthesize("Hello world", spk_audio_prompt="reference.wav")
         import soundfile as sf
         sf.write("output.wav", audio, 22050)
     """
@@ -109,10 +147,26 @@ class IndexTTS2:
     def synthesize(
         self,
         text: str,
-        reference_audio: Union[str, Path, np.ndarray],
+        # ── Speaker source (pick one; spk_audio_prompt wins over voice) ──────
+        spk_audio_prompt: Optional[Union[str, Path, np.ndarray]] = None,
+        voices_dir: Optional[Union[str, Path]] = None,
+        voice: Optional[str] = None,
+        # ── Backward-compat positional alias ─────────────────────────────────
+        reference_audio: Optional[Union[str, Path, np.ndarray]] = None,
         *,
-        sample_rate: int = None,
-        emotion: float = 1.0,
+        # ── Legacy sample_rate for numpy input ───────────────────────────────
+        sample_rate: Optional[int] = None,
+        # ── Emotion controls ─────────────────────────────────────────────────
+        emotion: float = 1.0,          # internal emotion scale on emo_vec
+        emo_alpha: float = 0.0,        # blend strength when emo source is provided
+        emo_vector: Optional[List[float]] = None,   # 8-float vector
+        emo_text: Optional[str] = None,
+        use_emo_text: Optional[bool] = None,        # tri-state: None = auto
+        emo_audio_prompt: Optional[Union[str, Path]] = None,
+        # ── Determinism ──────────────────────────────────────────────────────
+        seed: Optional[int] = None,
+        use_random: bool = False,
+        # ── Generation quality ───────────────────────────────────────────────
         cfm_steps: int = 10,
         temperature: float = 1.0,
         max_codes: int = 1500,
@@ -120,29 +174,85 @@ class IndexTTS2:
         gpt_temperature: float = 0.8,
         top_k: int = 30,
     ) -> np.ndarray:
-        """Synthesize speech from text using a reference voice.
-        
-        Args:
-            text: Text to synthesize.
-            reference_audio: Path to reference audio file, or numpy array of audio samples.
-            sample_rate: Sample rate of reference_audio (required if numpy array).
-            emotion: Emotion intensity scale. 0.0=neutral, 1.0=default, 2.0=expressive.
-            cfm_steps: Number of CFM diffusion steps. 10=fast, 25=quality.
-            temperature: CFM sampling temperature.
-            max_codes: Maximum number of GPT tokens to generate.
-            cfg_rate: Classifier-free guidance rate.
-            gpt_temperature: GPT sampling temperature. 0.8 matches original IndexTTS-2.
-            top_k: Top-k for GPT token sampling. 200 matches original IndexTTS-2.
-        
+        """Synthesize speech from text.
+
+        Speaker source (mutually exclusive; spk_audio_prompt wins):
+            spk_audio_prompt: path/array for reference speaker audio
+            voice + voices_dir: name resolved to voices_dir/{voice}.wav
+            reference_audio: legacy positional argument (deprecated alias for spk_audio_prompt)
+
+        Emotion controls:
+            emotion: internal emo_vec scale (0=neutral, 1=default, 2=expressive)
+            emo_alpha: blend strength for explicit emotion conditioning (0..1).
+                       Defaults to 0.0 (disabled) unless an emo source is set.
+            emo_vector: 8 floats [happy,angry,sad,afraid,disgusted,melancholic,surprised,calm]
+            emo_text: text description of desired emotion (auto-enables use_emo_text)
+            use_emo_text: tri-state; None=auto (enabled when emo_text is provided)
+            emo_audio_prompt: path to emotion reference audio
+
+        Determinism:
+            seed: integer seed for numpy random (used in top-k sampling + CFM noise)
+            use_random: if False (default) and seed is None, uses seed=0 for reproducibility
+
         Returns:
             Audio as float32 numpy array at 22050 Hz.
         """
-        audio_16k, audio_22k = self._load_audio(reference_audio, sample_rate)
+        # ── Resolve backward-compat reference_audio alias ────────────────────
+        if reference_audio is not None:
+            if spk_audio_prompt is not None:
+                warnings.warn(
+                    "Both 'reference_audio' and 'spk_audio_prompt' provided; "
+                    "'spk_audio_prompt' takes precedence.",
+                    stacklevel=2,
+                )
+            else:
+                spk_audio_prompt = reference_audio
 
-        # Tokenize text
+        # ── Resolve speaker prompt ────────────────────────────────────────────
+        spk_path = _resolve_speaker(voices_dir, voice, spk_audio_prompt)
+        if spk_path is None:
+            raise ValueError(
+                "No speaker source provided. Supply spk_audio_prompt, "
+                "or voice + voices_dir."
+            )
+
+        # ── Emotion precedence + auto use_emo_text ────────────────────────────
+        if emo_vector is not None and emo_text is not None:
+            warnings.warn(
+                "Both emo_vector and emo_text provided; emo_vector takes precedence.",
+                stacklevel=2,
+            )
+            emo_text = None
+
+        if emo_text is not None and use_emo_text is None:
+            use_emo_text = True
+
+        if emo_vector is not None:
+            emo_vector = parse_emo_vector(emo_vector)
+
+        # If any emo source set and emo_alpha still at default 0.0, note it's user's choice
+        _has_emo_source = (emo_vector is not None or emo_text is not None or emo_audio_prompt is not None)
+        # emo_alpha stays at whatever the caller set (including 0.0)
+
+        # ── Determinism ──────────────────────────────────────────────────────
+        if not use_random:
+            effective_seed = seed if seed is not None else 0
+            np.random.seed(effective_seed)
+            mx.random.seed(effective_seed)
+        elif seed is not None:
+            np.random.seed(seed)
+            mx.random.seed(seed)
+
+        # ── Load audio ───────────────────────────────────────────────────────
+        if isinstance(spk_path, np.ndarray):
+            audio_16k, audio_22k = self._load_audio(spk_path, sample_rate)
+        else:
+            audio_16k, audio_22k = self._load_audio(spk_path, sample_rate)
+
+        # ── Tokenize text ─────────────────────────────────────────────────────
         text_tokens = mx.array([self.sp.encode(text.upper())])
 
-        # Compute reference mel
+        # ── Compute reference mel ─────────────────────────────────────────────
         ref_mel_80 = compute_mel_s2mel(audio_22k)
         ref_target_lengths = mx.array([ref_mel_80.shape[2]], dtype=mx.int32)
         mx.eval(ref_mel_80)
@@ -156,7 +266,7 @@ class IndexTTS2:
         semantic_features = (out.hidden_states[17] - self.semantic_mean) / self.semantic_std
         mx.eval(semantic_features)
 
-        # 2. CAMPPlus speaker style (16 kHz, matching PyTorch IndexTTS-2)
+        # 2. CAMPPlus speaker style (16 kHz)
         feat = compute_kaldi_fbank_mlx(mx.array(audio_16k), num_mel_bins=80, sample_frequency=16000)
         feat = feat - feat.mean(axis=0, keepdims=True)
         speaker_style = self.campplus(feat[None])
@@ -230,12 +340,12 @@ class IndexTTS2:
 
 def synthesize(
     text: str,
-    reference_audio: Union[str, Path, np.ndarray],
+    reference_audio: Optional[Union[str, Path, np.ndarray]] = None,
     **kwargs,
 ) -> np.ndarray:
     """One-shot synthesis. Loads all models on each call.
-    
+
     For repeated synthesis, use IndexTTS2 class directly to avoid reloading weights.
     """
     tts = IndexTTS2(config=kwargs.pop('config', None))
-    return tts.synthesize(text, reference_audio, **kwargs)
+    return tts.synthesize(text, reference_audio=reference_audio, **kwargs)
