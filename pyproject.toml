@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "indextts-mlx"
+version = "0.1.0"
+description = "IndexTTS-2 TTS inference on Apple Silicon via MLX"
+requires-python = ">=3.10"
+dependencies = [
+    "mlx>=0.21",
+    "numpy",
+    "soundfile",
+    "librosa",
+    "sentencepiece",
+    "click",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-timeout"]
+
+[project.scripts]
+indextts-tts = "cli.tts:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["indextts_mlx*", "cli*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "parity: parity tests against reference implementations (skipped if deps missing)",
+]
