@@ -140,9 +140,22 @@ celerybeat.pid
 .venv
 env/
 venv/
+venv_parity/
 ENV/
 env.bak/
 venv.bak/
+
+# Model weights (large binary files — store outside the repo)
+*.npz
+*.pth
+*.safetensors
+*.bin
+
+# Audio files
+*.wav
+*.mp3
+*.flac
+*.ogg
 
 # Spyder project settings
 .spyderproject

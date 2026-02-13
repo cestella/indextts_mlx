@@ -4,10 +4,21 @@
 
 This is a pure-MLX inference package for IndexTTS-2 TTS on Apple Silicon. It wraps six models in a single `IndexTTS2` class with a `synthesize()` method and a `indextts-tts` CLI entry point.
 
-**Always activate the venv before running anything:**
+**Two virtual environments:**
+
+| Venv | Purpose | Activate |
+|------|---------|---------|
+| `venv/` | Normal inference + tests (MLX only) | `source venv/bin/activate` |
+| `venv_parity/` | PyTorch parity comparison (has torch, transformers, torchaudio) | `source venv_parity/bin/activate` |
+
+Create them once:
 
 ```bash
-source /Users/cstella/code/indextts_mlx/venv/bin/activate
+# Inference venv (Python 3.14, MLX stack)
+python3 -m venv venv && venv/bin/pip install -e ".[dev]"
+
+# Parity venv (Python 3.11, PyTorch stack — used for compare_pytorch_mlx.py)
+python3.11 -m venv venv_parity && venv_parity/bin/pip install -e ".[parity]"
 ```
 
 ---
@@ -41,6 +52,49 @@ from indextts_mlx import IndexTTS2
 tts = IndexTTS2()
 audio = tts.synthesize("Hello.", reference_audio="~/audiobooks/voices/prunella_scales.wav")
 ```
+
+### PyTorch parity comparison
+
+`tests/compare_pytorch_mlx.py` runs both the PyTorch reference implementation and the MLX port on the same input and prints a stage-by-stage tensor comparison table. Use this to identify where outputs diverge.
+
+**Requires** `venv_parity` (has `torch`, `transformers`, `torchaudio`, `mlx` all together).
+
+```bash
+venv_parity/bin/python tests/compare_pytorch_mlx.py \
+    --voice ~/audiobooks/voices/prunella_scales.wav \
+    --text "Despite a deadlock over funding for the agency, lawmakers left town."
+```
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--voice PATH` | Reference audio file (required) |
+| `--text TEXT` | Text to synthesize (required) |
+| `--save-dir PATH` | Save intermediate tensors as `.npy` files for offline inspection |
+
+Output columns: `name | shape | max|Δ| | cos_sim | pt_mean | mlx_mean`
+
+**Interpreting results:**
+- Stages up through `inference regulator` should have `cos≈1.000` and `max|Δ| < 0.1` — large divergence here indicates a weight loading or architecture bug
+- `CFM mel output` and `BigVGAN waveform` will differ between runs due to independent random noise in the diffusion sampler — this is expected; `cos≈0.99` on the mel is healthy
+
+**Known baseline (after all fixes):**
+
+| Stage | Expected max\|Δ\| | Expected cos |
+|-------|-----------------|-------------|
+| seamless fbank | 0.000 | 1.000 |
+| W2V-BERT hidden[17] | <0.003 | 1.000 |
+| normalized semantic features | <0.002 | 1.000 |
+| CAMPPlus speaker style | <0.015 | 1.000 |
+| semantic_codec S_ref | 0.000 | 1.000 |
+| prompt regulator | 0.000 | 1.000 |
+| GPT latent | <0.02 | 1.000 |
+| GPT latent proj | <0.003 | 1.000 |
+| S_infer | <0.003 | 1.000 |
+| inference regulator | <0.001 | 1.000 |
+| CFM mel | varies (noise) | ~0.995 |
+| BigVGAN waveform | varies (noise) | ~0.02 |
 
 ---
 
@@ -168,7 +222,8 @@ Add the fixture in `conftest.py` if it needs to be session-scoped and shared.
 | `ValueError: Received N parameters not in model` | Using `strict=True` on a model with extra keys in the NPZ — add `strict=False` |
 | `ValueError: indices must be integral` in semantic_codec | `quantize()` returns `(codes, quantized_out)` — use `codes, _ = quantize(...)`, not `_, codes = ...` |
 | GPT loop never hits stop token | `max_codes` too small for long input. Default is 1500; each character ≈ 2–4 codes |
-| GPT generates repetitive codes → noise | Greedy argmax sampling gets stuck in loops; use `gpt_temperature=0.8, top_k=200` (the defaults, matching original IndexTTS-2) |
+| GPT generates repetitive codes → noise | Greedy argmax sampling gets stuck in loops; use `gpt_temperature=0.8, top_k=30` (matching original IndexTTS-2) |
+| GPT latent diverges from PyTorch (cos < 1.000) | `forward_for_latent` must apply `self.final_norm` before extracting mel hidden states — matches PyTorch `get_logits` which does `enc = self.final_norm(enc)` |
 | S2Mel sounds wrong despite correct architecture | NPZ may be missing biases from weight-normed layers (`x_embedder.bias`, wavenet biases, etc.). Patch NPZ by running the extraction script or loading from `.pth` |
 | CFM output is wrong length | Check `n_timesteps` — DiT WaveNet residual requires output T = input T (padding must be same-length) |
 

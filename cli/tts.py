@@ -26,7 +26,7 @@ from indextts_mlx import IndexTTS2, WeightsConfig
               help="Maximum GPT tokens to generate")
 @click.option("--gpt-temperature", default=0.8, show_default=True, type=float,
               help="GPT sampling temperature (0.8 matches original IndexTTS-2)")
-@click.option("--top-k", default=200, show_default=True, type=int,
+@click.option("--top-k", default=30, show_default=True, type=int,
               help="Top-k for GPT token sampling")
 @click.option("--weights-dir", default=None, type=click.Path(),
               help="Override weights directory")

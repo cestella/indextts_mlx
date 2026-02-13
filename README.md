@@ -74,7 +74,7 @@ indextts-tts TEXT --voice PATH [OPTIONS]
 | `--cfg-rate FLOAT` | `0.7` | Classifier-free guidance rate |
 | `--max-codes INT` | `1500` | Maximum GPT tokens (caps output length) |
 | `--gpt-temperature FLOAT` | `0.8` | GPT sampling temperature (matches original IndexTTS-2) |
-| `--top-k INT` | `200` | Top-k for GPT sampling |
+| `--top-k INT` | `30` | Top-k for GPT sampling |
 | `--weights-dir PATH` | — | Override weights directory |
 | `--bpe-model PATH` | — | Override BPE model path |
 | `--play` | — | Play output via `afplay` after synthesis (macOS) |

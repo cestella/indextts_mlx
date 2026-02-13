@@ -396,6 +396,9 @@ class UnifiedVoice(nn.Module):
         # GPT2 forward
         hidden_states, _ = self.gpt(full_input, attention_mask, None)
 
+        # Apply final_norm — matches PyTorch get_logits: enc = self.final_norm(enc)
+        hidden_states = self.final_norm(hidden_states)
+
         # Extract mel hidden states (positions after cond + text, then strip last 2)
         # PyTorch: get_logits extracts mel portion, then returns mel_logits[:, :-2]
         n_cond = cond_latents.shape[1]

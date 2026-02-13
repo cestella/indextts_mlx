@@ -18,6 +18,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-timeout"]
+parity = [
+    "torch",
+    "torchaudio",
+    "transformers",
+    "safetensors",
+    "huggingface_hub",
+    "omegaconf",
+]
 
 [project.scripts]
 indextts-tts = "cli.tts:main"

@@ -102,8 +102,8 @@ class IndexTTS2:
             if sr is None:
                 raise ValueError("sample_rate must be provided when reference_audio is a numpy array")
 
-        audio_16k = librosa.resample(audio, orig_sr=sr, target_sr=16000).astype(np.float32)[:3*16000]
-        audio_22k = librosa.resample(audio, orig_sr=sr, target_sr=22050).astype(np.float32)[:3*22050]
+        audio_16k = librosa.resample(audio, orig_sr=sr, target_sr=16000).astype(np.float32)[:15*16000]
+        audio_22k = librosa.resample(audio, orig_sr=sr, target_sr=22050).astype(np.float32)[:15*22050]
         return audio_16k, audio_22k
 
     def synthesize(
@@ -118,7 +118,7 @@ class IndexTTS2:
         max_codes: int = 1500,
         cfg_rate: float = 0.7,
         gpt_temperature: float = 0.8,
-        top_k: int = 200,
+        top_k: int = 30,
     ) -> np.ndarray:
         """Synthesize speech from text using a reference voice.
         
@@ -156,8 +156,8 @@ class IndexTTS2:
         semantic_features = (out.hidden_states[17] - self.semantic_mean) / self.semantic_std
         mx.eval(semantic_features)
 
-        # 2. CAMPPlus speaker style
-        feat = compute_kaldi_fbank_mlx(mx.array(audio_22k), num_mel_bins=80, sample_frequency=22050)
+        # 2. CAMPPlus speaker style (16 kHz, matching PyTorch IndexTTS-2)
+        feat = compute_kaldi_fbank_mlx(mx.array(audio_16k), num_mel_bins=80, sample_frequency=16000)
         feat = feat - feat.mean(axis=0, keepdims=True)
         speaker_style = self.campplus(feat[None])
         mx.eval(speaker_style)
