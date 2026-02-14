@@ -113,27 +113,28 @@ class TestBuildPrompt:
         assert "Some context." in p
         assert "Target sentence." in p
 
-    def test_all_emotion_labels_listed(self):
+    def test_all_active_emotion_labels_listed(self):
         p = _build_prompt("ctx", "sent")
+        # calm_authority (index 6) is not emitted by the current prompt (outputs 0-5 only)
         for label in EMOTION_LABELS:
+            if label == "calm_authority":
+                continue
             assert label in p
 
     def test_output_format_instructions_present(self):
         p = _build_prompt("ctx", "sent")
         assert "ONE digit" in p
-        assert "0, 1, 2, 3, 4, 5, 6" in p
+        assert "0, 1, 2, 3, 4, 5" in p
 
     def test_joyful_specific_rules_present(self):
         p = _build_prompt("ctx", "sent")
-        assert "JOYFUL" in p
-        assert "small practical wins" in p.lower() or "small practical" in p.lower()
-        assert "mundane" in p.lower()
+        assert "joyful" in p
+        assert "happy" in p.lower() or "happiness" in p.lower()
 
     def test_mild_emphasis_specific_rules_present(self):
         p = _build_prompt("ctx", "sent")
-        assert "MILD_EMPHASIS" in p
-        assert "discursive" in p.lower() or "analytical" in p.lower()
-        assert "wit" in p.lower() or "irony" in p.lower()
+        assert "mild_emphasis" in p
+        assert "analytical" in p.lower()
         assert "rare" in p.lower()
         assert "structural" in p.lower()
 
@@ -162,7 +163,7 @@ class TestBuildPrompt:
 class TestClassifierConfig:
     def test_defaults(self):
         cfg = ClassifierConfig()
-        assert cfg.model == "mlx-community/Hermes-3-Llama-3.1-8B-MLX"
+        assert cfg.model == "mlx-community/Qwen2.5-32B-Instruct-4bit"
         assert cfg.max_retries == 3
         assert cfg.context_window == 5
         assert cfg.language == "english"

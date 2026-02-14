@@ -434,8 +434,7 @@ def main(
 
         # Collect all processable files (.txt and .jsonl), sorted for predictable order
         candidates = sorted(
-            p for p in in_dir.iterdir()
-            if p.is_file() and p.suffix.lower() in (".txt", ".jsonl")
+            p for p in in_dir.iterdir() if p.is_file() and p.suffix.lower() in (".txt", ".jsonl")
         )
         if not candidates:
             raise click.ClickException(f"No .txt or .jsonl files found in {in_dir}")
@@ -451,9 +450,7 @@ def main(
             else:
                 pending.append(inp)
 
-        click.echo(
-            f"Batch mode: {len(candidates)} file(s) in {in_dir} → {out_dir}"
-        )
+        click.echo(f"Batch mode: {len(candidates)} file(s) in {in_dir} → {out_dir}")
         if skipped:
             click.echo(f"  Skipping {len(skipped)} already-processed file(s):")
             for p in skipped:
@@ -514,7 +511,9 @@ def main(
                     if ext == "mp3":
                         _write_mp3(wav_audio, wav_sr, out_file)
                     elif ext == "pcm":
-                        out_file.write_bytes((np.clip(wav_audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes())
+                        out_file.write_bytes(
+                            (np.clip(wav_audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+                        )
             else:
                 # Plain text → synthesize_long
                 input_text = inp.read_text(encoding="utf-8")
@@ -556,11 +555,16 @@ def main(
                 )
                 if sample_rate != 22050:
                     import librosa as _librosa
-                    audio = _librosa.resample(audio, orig_sr=22050, target_sr=sample_rate).astype(np.float32)
+
+                    audio = _librosa.resample(audio, orig_sr=22050, target_sr=sample_rate).astype(
+                        np.float32
+                    )
                 if ext == "mp3":
                     _write_mp3(audio, sample_rate, out_file)
                 elif ext == "pcm":
-                    out_file.write_bytes((np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes())
+                    out_file.write_bytes(
+                        (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+                    )
                 else:
                     sf.write(str(out_file), audio, sample_rate)
                 click.echo(f"  Saved {len(audio)/sample_rate:.2f}s → {out_file}")

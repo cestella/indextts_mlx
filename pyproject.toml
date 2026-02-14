@@ -16,6 +16,7 @@ dependencies = [
     "sentencepiece",
     "click",
     "ftfy",
+    "isbnlib",
 ]
 
 [project.optional-dependencies]
@@ -44,6 +45,7 @@ convert = [
 indextts-tts = "cli.tts:main"
 indextts-download-weights = "cli.download_weights:main"
 indextts-classify-emotions = "cli.classify_emotions:main"
+indextts-m4b = "cli.m4b:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

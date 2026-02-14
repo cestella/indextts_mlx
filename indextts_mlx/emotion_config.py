@@ -18,7 +18,6 @@ from typing import Dict, List, Optional, Union
 
 import numpy as np
 
-
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
@@ -27,14 +26,14 @@ import numpy as np
 @dataclass
 class EmotionBase:
     emo_vector: List[float]  # 8 floats
-    emo_alpha: float         # 0..1
+    emo_alpha: float  # 0..1
 
 
 @dataclass
 class EmotionDrift:
     vector_sigma: List[float]  # per-dimension sigma (8 floats)
     alpha_sigma: float
-    smoothing: float           # EMA factor for the existing smoothed value (0..1)
+    smoothing: float  # EMA factor for the existing smoothed value (0..1)
 
 
 @dataclass
@@ -123,7 +122,7 @@ def resolve_emotion_config_path(
 @dataclass
 class _DriftState:
     vector: np.ndarray  # smoothed current vector (float32, shape (8,))
-    alpha: float        # smoothed current alpha
+    alpha: float  # smoothed current alpha
 
 
 # ---------------------------------------------------------------------------

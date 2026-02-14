@@ -119,7 +119,7 @@ def synthesize_long(
     # Optional EmotionResolver + label: when supplied, resolver.resolve() is called
     # per chunk so drift advances sentence-by-sentence within the segment.
     # Ignored when emo_vector or emo_alpha are explicitly set (overrides take precedence).
-    emotion_resolver=None,   # Optional[EmotionResolver]
+    emotion_resolver=None,  # Optional[EmotionResolver]
     emotion_label: Optional[str] = None,
     # Optional progress callback: f(chunk_index, total_chunks, chunk_text)
     # Called BEFORE synthesis of each chunk.

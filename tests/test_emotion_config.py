@@ -24,15 +24,32 @@ from indextts_mlx.emotion_config import (
 
 _MINIMAL_CONFIG = {
     "version": 1,
-    "vector_order": ["happy", "angry", "sad", "afraid", "disgusted", "melancholic", "surprised", "calm"],
+    "vector_order": [
+        "happy",
+        "angry",
+        "sad",
+        "afraid",
+        "disgusted",
+        "melancholic",
+        "surprised",
+        "calm",
+    ],
     "emotions": {
         "neutral": {
             "base": {"emo_vector": [0, 0, 0, 0, 0, 0, 0, 0.3], "emo_alpha": 0.1},
-            "drift": {"vector_sigma": [0.02, 0, 0, 0, 0, 0, 0.01, 0.04], "alpha_sigma": 0.02, "smoothing": 0.85},
+            "drift": {
+                "vector_sigma": [0.02, 0, 0, 0, 0, 0, 0.01, 0.04],
+                "alpha_sigma": 0.02,
+                "smoothing": 0.85,
+            },
         },
         "melancholic": {
             "base": {"emo_vector": [0, 0.05, 0.15, 0.05, 0, 0.45, 0, 0.55], "emo_alpha": 0.3},
-            "drift": {"vector_sigma": [0, 0.01, 0.03, 0.01, 0, 0.04, 0, 0.03], "alpha_sigma": 0.02, "smoothing": 0.85},
+            "drift": {
+                "vector_sigma": [0, 0.01, 0.03, 0.01, 0, 0.04, 0, 0.03],
+                "alpha_sigma": 0.02,
+                "smoothing": 0.85,
+            },
         },
         "joyful": {
             "base": {"emo_vector": [0.42, 0.05, 0, 0, 0, 0.22, 0, 0.58], "emo_alpha": 0.3},
@@ -181,7 +198,9 @@ class TestEmotionResolverNoDrift:
 
     def test_both_overrides_bypass_preset(self, resolver):
         override_v = [0.5] * 8
-        vec, alpha = resolver.resolve("melancholic", override_vector=override_v, override_alpha=0.77)
+        vec, alpha = resolver.resolve(
+            "melancholic", override_vector=override_v, override_alpha=0.77
+        )
         assert vec == override_v
         assert alpha == pytest.approx(0.77)
 
@@ -225,9 +244,7 @@ class TestEmotionResolverDrift:
             arr = np.array(vec)
             # Each dimension must be within base ± 2*sigma (and >= 0)
             assert np.all(arr >= 0.0), f"Vector went negative: {arr}"
-            assert np.all(arr <= base_v + 2 * sigma_v + 1e-9), (
-                f"Vector exceeded upper bound: {arr}"
-            )
+            assert np.all(arr <= base_v + 2 * sigma_v + 1e-9), f"Vector exceeded upper bound: {arr}"
             assert alpha >= 0.0
             assert alpha <= base_a + 2 * sigma_a + 1e-9
 
@@ -289,9 +306,7 @@ class TestEmotionResolverFromVoicesDir:
     def test_explicit_path_overrides_voices_dir(self, tmp_path):
         explicit = tmp_path / "custom.json"
         explicit.write_text(json.dumps(_MINIMAL_CONFIG))
-        resolver = EmotionResolver.from_voices_dir(
-            voices_dir=None, explicit_path=explicit
-        )
+        resolver = EmotionResolver.from_voices_dir(voices_dir=None, explicit_path=explicit)
         assert resolver is not None
         vec, _ = resolver.resolve("joyful")
         assert vec[0] == pytest.approx(0.42)

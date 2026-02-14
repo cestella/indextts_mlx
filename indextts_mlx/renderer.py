@@ -213,9 +213,9 @@ def render_segments_jsonl(
         silence_between_chunks_ms=silence_between_chunks_ms,
         crossfade_ms=crossfade_ms,
         segmenter_config=seg_config,
-        normalizer_config=shared_normalizer.config
-        if shared_normalizer
-        else NormalizerConfig(language=language),
+        normalizer_config=(
+            shared_normalizer.config if shared_normalizer else NormalizerConfig(language=language)
+        ),
         verbose=False,
     )
 
@@ -257,7 +257,9 @@ def render_segments_jsonl(
 
         # ── Emotion label resolution ──────────────────────────────────────────
         emotion_label = _rec_emotion if isinstance(_rec_emotion, str) else None
-        seg_has_explicit_emo = record.get("emo_vector") is not None or record.get("emo_alpha") is not None
+        seg_has_explicit_emo = (
+            record.get("emo_vector") is not None or record.get("emo_alpha") is not None
+        )
         chunk_resolver = None  # resolver passed to synthesize_long for per-chunk drift
 
         if resolver is not None:
@@ -272,7 +274,11 @@ def render_segments_jsonl(
                 # Drift active and no explicit overrides: use preset base for the
                 # cache key (stable, no tick), then hand the resolver to
                 # synthesize_long so drift advances per chunk (sentence).
-                effective_label = emotion_label if (emotion_label and emotion_label in resolver.config.emotions) else "neutral"
+                effective_label = (
+                    emotion_label
+                    if (emotion_label and emotion_label in resolver.config.emotions)
+                    else "neutral"
+                )
                 if effective_label not in resolver.config.emotions:
                     effective_label = next(iter(resolver.config.emotions))
                 preset = resolver.config.emotions[effective_label]
@@ -403,9 +409,12 @@ def render_segments_jsonl(
         chime_audio = chime_audio.ravel()
         if chime_sr != sample_rate:
             import librosa
-            chime_audio = librosa.resample(
-                chime_audio, orig_sr=chime_sr, target_sr=sample_rate
-            ).astype(np.float32).ravel()
+
+            chime_audio = (
+                librosa.resample(chime_audio, orig_sr=chime_sr, target_sr=sample_rate)
+                .astype(np.float32)
+                .ravel()
+            )
         if verbose:
             print(f"  end_chime: {len(chime_audio)/sample_rate:.2f}s from {end_chime}")
         full_audio = np.concatenate([full_audio, chime_audio])
