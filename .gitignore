@@ -152,7 +152,8 @@ venv.bak/
 *.bin
 
 # Audio files
-*.wav
+*.mp3
+# *.wav -- for the purpose of voices, we need wav files
 *.flac
 *.ogg
 
