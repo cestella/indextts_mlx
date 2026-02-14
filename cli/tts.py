@@ -172,14 +172,13 @@ def add_options(options):
 
 
 @click.command()
-# Text input (mutually exclusive; at least one required unless --segments-jsonl)
 @click.option("--text", default=None, help="Text to synthesize.")
 @click.option(
     "--file",
     "text_file",
     default=None,
     type=click.Path(exists=True),
-    help="Text file to synthesize (UTF-8).",
+    help="Text file (.txt) or JSONL segments file (.jsonl) to synthesize (UTF-8).",
 )
 # Long-text pipeline controls
 @click.option(
@@ -255,24 +254,23 @@ def add_options(options):
 @add_options(_SHARED_QUALITY_OPTS)
 # Weights
 @add_options(_SHARED_WEIGHTS_OPTS)
-# JSONL chapter mode
-@click.option(
-    "--segments-jsonl",
-    default=None,
-    type=click.Path(exists=True),
-    help="JSONL file for chapter rendering (one segment JSON per line).",
-)
-@click.option(
-    "--output",
-    default=None,
-    type=click.Path(),
-    help="Chapter output WAV path (JSONL mode; defaults to --out value).",
-)
 @click.option(
     "--cache-dir",
     default=None,
     type=click.Path(),
     help="Segment audio cache directory (JSONL mode).",
+)
+@click.option(
+    "--emotions-json",
+    default=None,
+    type=click.Path(),
+    help="Path to emotions.json mapping emotion labels to emo-vector/emo-alpha (JSONL mode). Auto-detected from --voices-dir if not set.",
+)
+@click.option(
+    "--end-chime",
+    default=None,
+    type=click.Path(exists=True),
+    help="Audio file appended to the end of the chapter (JSONL mode). Resampled if needed.",
 )
 # Utility
 @click.option(
@@ -314,9 +312,9 @@ def main(
     top_k,
     weights_dir,
     bpe_model,
-    segments_jsonl,
-    output,
     cache_dir,
+    emotions_json,
+    end_chime,
     do_list_voices,
     verbose,
 ):
@@ -357,7 +355,7 @@ def main(
       indextts-tts --text "What a day!" --spk-audio-prompt speaker.wav \\
           --emo-vector "0.8,0,0,0,0,0,0,0.2" --emo-alpha 0.5
 
-      indextts-tts --segments-jsonl chapter01.jsonl \\
+      indextts-tts --file chapter01.jsonl \\
           --voices-dir ~/voices --out chapter01.wav
 
       indextts-tts --list-voices --voices-dir ~/voices
@@ -407,14 +405,14 @@ def main(
 
     config = _build_config(weights_dir, bpe_model)
 
-    # ── JSONL chapter mode ────────────────────────────────────────────────────
-    if segments_jsonl:
-        chapter_out = Path(output or out)
+    # ── JSONL chapter mode (auto-detected from .jsonl extension) ─────────────
+    if text_file and Path(text_file).suffix.lower() == ".jsonl":
+        chapter_out = Path(out)
         click.echo(f"Loading models from {config.weights_dir}...")
         tts = IndexTTS2(config=config)
-        click.echo(f"Rendering chapter from {segments_jsonl} → {chapter_out}")
+        click.echo(f"Rendering chapter from {text_file} → {chapter_out}")
         render_segments_jsonl(
-            jsonl_path=segments_jsonl,
+            jsonl_path=text_file,
             output_path=chapter_out,
             tts=tts,
             voices_dir=voices_dir,
@@ -435,7 +433,13 @@ def main(
             gpt_temperature=gpt_temperature,
             top_k=top_k,
             sample_rate=sample_rate,
+            normalize=normalize,
+            language=language,
+            silence_between_chunks_ms=silence_ms,
+            crossfade_ms=crossfade_ms,
             cache_dir=cache_dir,
+            emotions_json=emotions_json,
+            end_chime=end_chime,
             verbose=True,
         )
         if play:
@@ -446,9 +450,7 @@ def main(
     if text and text_file:
         raise click.UsageError("Provide --text or --file, not both.")
     if not text and not text_file:
-        raise click.UsageError(
-            "Provide --text or --file (or use --segments-jsonl for chapter mode)."
-        )
+        raise click.UsageError("Provide --text or --file (plain text or .jsonl).")
 
     if text_file:
         input_text = Path(text_file).read_text(encoding="utf-8")

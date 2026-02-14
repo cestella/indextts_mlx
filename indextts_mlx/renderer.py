@@ -15,7 +15,41 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from .pipeline import IndexTTS2, OUTPUT_SAMPLE_RATE
+from .normalizer import Normalizer, NormalizerConfig
+from .synthesize_long import synthesize_long
 from .voices import parse_emo_vector
+
+# Sentinel so we can distinguish "not passed" from None
+_UNSET = object()
+
+
+def _load_emotions_map(emotions_json: Optional[Union[str, Path]]) -> Dict:
+    """Load emotions.json into a dict keyed by label name.
+
+    Returns an empty dict if path is None or file doesn't exist.
+    """
+    if emotions_json is None:
+        return {}
+    p = Path(emotions_json)
+    if not p.exists():
+        warnings.warn(f"emotions.json not found at {p} — emotion labels will be ignored")
+        return {}
+    with p.open() as f:
+        return json.load(f)
+
+
+def _resolve_emotions_json(
+    explicit: Optional[Union[str, Path]],
+    voices_dir: Optional[Union[str, Path]],
+) -> Optional[Path]:
+    """Find emotions.json: explicit path > voices_dir/emotions.json."""
+    if explicit is not None:
+        return Path(explicit)
+    if voices_dir is not None:
+        candidate = Path(voices_dir) / "emotions.json"
+        if candidate.exists():
+            return candidate
+    return None
 
 # Silence padding value
 _SILENCE = np.float32(0.0)
@@ -113,10 +147,19 @@ def render_segments_jsonl(
     gpt_temperature: float = 0.8,
     top_k: int = 30,
     sample_rate: int = OUTPUT_SAMPLE_RATE,
+    # Long-text pipeline controls (applied per segment)
+    normalize: bool = True,
+    language: str = "english",
+    silence_between_chunks_ms: int = 300,
+    crossfade_ms: int = 10,
     # Cache directory (None = no caching)
     cache_dir: Optional[Union[str, Path]] = None,
     # Model version string (for cache key)
     model_version: str = "indextts2-mlx-v1",
+    # Emotion label → vector/alpha map (path to emotions.json, or auto-detected from voices_dir)
+    emotions_json: Optional[Union[str, Path]] = None,
+    # Optional audio file appended after the last segment (e.g. a chapter-end chime)
+    end_chime: Optional[Union[str, Path]] = None,
     verbose: bool = True,
 ) -> np.ndarray:
     """Render a JSONL chapter file to a single WAV.
@@ -146,6 +189,10 @@ def render_segments_jsonl(
     if cache_dir:
         cache_dir.mkdir(parents=True, exist_ok=True)
 
+    # Resolve and load emotions map (label → emo-vector / emo-alpha)
+    _emotions_json_path = _resolve_emotions_json(emotions_json, voices_dir)
+    emotions_map = _load_emotions_map(_emotions_json_path)
+
     # Load JSONL
     records: List[Dict] = []
     with open(jsonl_path) as f:
@@ -166,6 +213,9 @@ def render_segments_jsonl(
     if tts is None:
         tts = IndexTTS2()
 
+    # Build the normalizer once so NeMo is not re-initialised per segment.
+    shared_normalizer = Normalizer(NormalizerConfig(language=language)) if normalize else None
+
     chunks: List[np.ndarray] = []
     total_segments = len(records)
 
@@ -177,7 +227,11 @@ def render_segments_jsonl(
         seg_voices_dir = _merge(voices_dir, record.get("voices_dir"))
         seg_voice = _merge(voice, record.get("voice"))
         seg_spk = _merge(spk_audio_prompt, record.get("spk_audio_prompt"))
-        seg_emotion = float(_merge(emotion, record.get("emotion", None)) or emotion)
+        _rec_emotion = record.get("emotion", None)
+        # emotion field may be a string label (from classifier) — ignore it here;
+        # it is resolved to emo_vector/emo_alpha below via emotions_map.
+        _rec_emotion_float = _rec_emotion if isinstance(_rec_emotion, (int, float)) else None
+        seg_emotion = float(_merge(emotion, _rec_emotion_float) or emotion)
         seg_emo_alpha = float(_merge(emo_alpha, record.get("emo_alpha", None)) or 0.0)
         seg_emo_vector = _merge(emo_vector, record.get("emo_vector"))
         seg_emo_text = _merge(emo_text, record.get("emo_text"))
@@ -197,6 +251,22 @@ def render_segments_jsonl(
 
         pause_before = int(record.get("pause_before_ms", 0))
         pause_after = int(record.get("pause_after_ms", 0))
+
+        # ── Emotion label resolution ──────────────────────────────────────────
+        # If the segment carries a string emotion label (from the classifier)
+        # and has no explicit emo_vector/emo_alpha, resolve from emotions_map.
+        emotion_label = _rec_emotion
+        if (
+            isinstance(emotion_label, str)
+            and emotion_label in emotions_map
+            and record.get("emo_vector") is None
+            and record.get("emo_alpha") is None
+        ):
+            entry = emotions_map[emotion_label]
+            if seg_emo_vector is None:
+                seg_emo_vector = entry.get("emo-vector")
+            if seg_emo_alpha == 0.0:
+                seg_emo_alpha = float(entry.get("emo-alpha", 0.0))
 
         # Resolve effective spk source string for cache key
         if seg_spk is not None:
@@ -236,12 +306,31 @@ def render_segments_jsonl(
                     )
 
         if cached_audio is None:
+            emotion_label = _rec_emotion if isinstance(_rec_emotion, str) else None
             if verbose:
                 preview = text[:60] + ("..." if len(text) > 60 else "")
-                print(f"  [{idx+1}/{total_segments}] seg={seg_id!r} synthesizing: {preview!r}")
+                emotion_tag = f" [{emotion_label}]" if emotion_label else ""
+                print(
+                    f"  [{idx+1}/{total_segments}] seg={seg_id!r}{emotion_tag}"
+                    f" synthesizing: {preview!r}"
+                )
 
-            seg_audio = tts.synthesize(
-                text=text,
+            def _on_chunk(i, total, chunk_text):
+                if verbose:
+                    preview = chunk_text[:50] + ("..." if len(chunk_text) > 50 else "")
+                    print(f"    chunk {i+1}/{total}: {preview!r}")
+
+            def _on_chunk_done(i, total, stats):
+                if verbose:
+                    print(
+                        f"           audio: {stats['audio_duration_s']:.2f}s"
+                        f" | wall: {stats['wall_time_s']:.1f}s"
+                        f" | {stats['realtime_factor']:.1f}x realtime"
+                    )
+
+            seg_audio = synthesize_long(
+                text,
+                tts=tts,
                 voices_dir=seg_voices_dir,
                 voice=seg_voice,
                 spk_audio_prompt=seg_spk,
@@ -259,6 +348,14 @@ def render_segments_jsonl(
                 cfg_rate=seg_cfg_rate,
                 gpt_temperature=seg_gpt_temperature,
                 top_k=seg_top_k,
+                normalize=normalize,
+                language=language,
+                silence_between_chunks_ms=silence_between_chunks_ms,
+                crossfade_ms=crossfade_ms,
+                normalizer=shared_normalizer,
+                on_chunk=_on_chunk,
+                on_chunk_done=_on_chunk_done,
+                verbose=False,
             )
 
             # Resample if needed
@@ -274,9 +371,6 @@ def render_segments_jsonl(
 
             cached_audio = seg_audio
 
-            if verbose:
-                print(f"         → {len(cached_audio)/seg_sample_rate:.2f}s")
-
         # ── Assemble ──────────────────────────────────────────────────────────
         if pause_before > 0:
             chunks.append(_silence_samples(pause_before, seg_sample_rate))
@@ -285,6 +379,17 @@ def render_segments_jsonl(
             chunks.append(_silence_samples(pause_after, seg_sample_rate))
 
     full_audio = np.concatenate(chunks)
+
+    if end_chime is not None:
+        chime_audio, chime_sr = sf.read(str(end_chime), dtype="float32")
+        if chime_audio.ndim > 1:
+            chime_audio = chime_audio.mean(axis=1)
+        if chime_sr != sample_rate:
+            import librosa
+            chime_audio = librosa.resample(
+                chime_audio, orig_sr=chime_sr, target_sr=sample_rate
+            ).astype(np.float32)
+        full_audio = np.concatenate([full_audio, chime_audio])
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     sf.write(str(output_path), full_audio, sample_rate)

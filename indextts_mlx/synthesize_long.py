@@ -114,6 +114,8 @@ def synthesize_long(
     crossfade_ms: int = 10,
     max_chars: int = 300,
     verbose: bool = False,
+    # Optional pre-built Normalizer to reuse (avoids re-initialising NeMo on every call)
+    normalizer: Optional["Normalizer"] = None,
     # Optional progress callback: f(chunk_index, total_chunks, chunk_text)
     # Called BEFORE synthesis of each chunk.
     on_chunk: Optional[Callable[[int, int, str], None]] = None,
@@ -161,7 +163,8 @@ def synthesize_long(
 
     # ── 1. Normalize ─────────────────────────────────────────────────────────
     if config.normalize:
-        normalizer = Normalizer(config.normalizer_config)
+        if normalizer is None:
+            normalizer = Normalizer(config.normalizer_config)
         text = normalizer.normalize(text)
 
     # ── 2. Segment ───────────────────────────────────────────────────────────

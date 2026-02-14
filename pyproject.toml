@@ -42,6 +42,7 @@ convert = [
 [project.scripts]
 indextts-tts = "cli.tts:main"
 indextts-download-weights = "cli.download_weights:main"
+indextts-classify-emotions = "cli.classify_emotions:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
