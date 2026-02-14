@@ -17,6 +17,10 @@ dependencies = [
     "click",
     "ftfy",
     "isbnlib",
+    "pydub",
+    "ebooklib",
+    "beautifulsoup4",
+    "lxml",
 ]
 
 [project.optional-dependencies]
@@ -42,10 +46,7 @@ convert = [
 ]
 
 [project.scripts]
-indextts-tts = "cli.tts:main"
-indextts-download-weights = "cli.download_weights:main"
-indextts-classify-emotions = "cli.classify_emotions:main"
-indextts-m4b = "cli.m4b:main"
+indextts = "cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

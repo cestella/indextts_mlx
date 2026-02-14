@@ -325,6 +325,8 @@ class IndexTTS2:
 
         if emo_vector is not None:
             emo_vector = parse_emo_vector(emo_vector)
+            # Clamp each component to [0.0, 1.4] (matches ComfyUI node validation)
+            emo_vector = [max(0.0, min(1.4, v)) for v in emo_vector]
             # emo_alpha pre-scales the emo_vector components (matches PyTorch infer_v2.py)
             emo_vector_scale = max(0.0, min(1.0, emo_alpha))
             if emo_vector_scale != 1.0:

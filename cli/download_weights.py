@@ -439,7 +439,7 @@ def _download_indextts2_checkpoints(tmp_dir: Path) -> Path:
     return tmp_dir
 
 
-@click.command("indextts-download-weights")
+@click.command("download-weights")
 @click.option(
     "--out-dir",
     required=True,
@@ -462,7 +462,7 @@ def _download_indextts2_checkpoints(tmp_dir: Path) -> Path:
     show_default=True,
     help="Skip conversion steps whose output file already exists.",
 )
-def main(out_dir: str, cache_dir: str | None, skip_existing: bool) -> None:
+def download_weights(out_dir: str, cache_dir: str | None, skip_existing: bool) -> None:
     """Download and convert all IndexTTS-2 model weights to MLX format.
 
     Downloads source checkpoints from HuggingFace and converts them from
@@ -471,12 +471,13 @@ def main(out_dir: str, cache_dir: str | None, skip_existing: bool) -> None:
 
     After this command completes, point indextts-tts at the output directory:
 
-        indextts-tts --weights-dir <out-dir> --text "Hello world." --voice speaker.wav
+        indextts synthesize --weights-dir <out-dir> --text "Hello world." --voice speaker.wav
 
     or set the environment variable permanently:
 
         export INDEXTTS_MLX_WEIGHTS_DIR=<out-dir>
 
+    \b
     Requirements: torch, huggingface_hub, safetensors must be installed.
     Install them with:
 
@@ -535,10 +536,10 @@ def main(out_dir: str, cache_dir: str | None, skip_existing: bool) -> None:
     click.echo()
     click.echo("Next step — run synthesis:")
     click.echo(
-        f'  indextts-tts --weights-dir "{out}" '
+        f'  indextts synthesize --weights-dir "{out}" '
         '--text "Hello world." --voice speaker.wav --out out.wav'
     )
 
 
 if __name__ == "__main__":
-    main()
+    download_weights()

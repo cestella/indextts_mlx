@@ -16,7 +16,7 @@ from pathlib import Path
 import click
 
 
-@click.command()
+@click.command("m4b")
 @click.option(
     "--chapters-dir",
     required=True,
@@ -61,7 +61,7 @@ import click
     "Use KEY= (empty value) for flag-only args. Can be repeated.",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Print m4b-tool output.")
-def main(
+def m4b(
     chapters_dir,
     out,
     isbn,
@@ -75,9 +75,9 @@ def main(
 
     \b
     Example:
-      indextts-m4b --chapters-dir ~/audio/chapters \\
-                   --out ~/audio \\
-                   --isbn 9780743273565
+      indextts m4b --chapters-dir ~/audio/chapters \\
+              --out ~/audio \\
+              --isbn 9780743273565
     """
     from indextts_mlx.m4b_creator import M4bCreator, M4bCreatorConfig
 
@@ -119,4 +119,4 @@ def main(
 
 
 if __name__ == "__main__":
-    main()
+    m4b()

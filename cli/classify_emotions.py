@@ -11,7 +11,7 @@ from pathlib import Path
 import click
 
 
-@click.command()
+@click.command("classify-emotions")
 @click.argument("input_file", type=click.Path(exists=True, dir_okay=False))
 @click.argument("output_file", type=click.Path(dir_okay=False))
 @click.option(
@@ -61,7 +61,7 @@ import click
     default=False,
     help="Suppress per-sentence progress output.",
 )
-def main(
+def classify_emotions(
     input_file: str,
     output_file: str,
     model: str,
@@ -74,10 +74,13 @@ def main(
 ) -> None:
     """Classify emotions for each sentence in INPUT_FILE and write to OUTPUT_FILE.
 
-    INPUT_FILE  Plain-text chapter file (UTF-8).
+    \b
+    INPUT_FILE   Plain-text chapter file (UTF-8).
+    OUTPUT_FILE  Destination JSONL file; one record per line.
 
-    OUTPUT_FILE Destination JSONL file; one segment record per line,
-                conforming to schemas/segment.schema.json.
+    \b
+    Example:
+      indextts classify-emotions chapter01.txt chapter01.jsonl
     """
     try:
         from indextts_mlx.emotion_classifier import ClassifierConfig, EmotionClassifier
@@ -117,4 +120,4 @@ def main(
 
 
 if __name__ == "__main__":
-    main()
+    classify_emotions()

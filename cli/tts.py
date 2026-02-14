@@ -171,7 +171,7 @@ def add_options(options):
 # ── main command ──────────────────────────────────────────────────────────────
 
 
-@click.command()
+@click.command("synthesize")
 @click.option("--text", default=None, help="Text to synthesize.")
 @click.option(
     "--file",
@@ -293,7 +293,7 @@ def add_options(options):
     help="List available voice names in --voices-dir and exit.",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Print effective settings summary.")
-def main(
+def synthesize(
     text,
     text_file,
     normalize,
@@ -364,19 +364,19 @@ def main(
 
     \b
     Examples:
-      indextts-tts --text "Hello world" --spk-audio-prompt speaker.wav
+      indextts synthesize --text "Hello world" --spk-audio-prompt speaker.wav
 
-      indextts-tts --file chapter01.txt --voices-dir ~/voices --voice Emma --out ch01.wav
+      indextts synthesize --file chapter01.txt --voices-dir ~/voices --voice Emma --out ch01.wav
 
-      indextts-tts --text "What a day!" --spk-audio-prompt speaker.wav \\
+      indextts synthesize --text "What a day!" --spk-audio-prompt speaker.wav \\
           --emo-vector "0.8,0,0,0,0,0,0,0.2" --emo-alpha 0.5
 
-      indextts-tts --file chapter01.jsonl \\
+      indextts synthesize --file chapter01.jsonl \\
           --voices-dir ~/voices --out chapter01.wav
 
-      indextts-tts --list-voices --voices-dir ~/voices
+      indextts synthesize --list-voices --voices-dir ~/voices
 
-      indextts-tts --file ~/chapters --out ~/audio --out-ext mp3 \\
+      indextts synthesize --file ~/chapters --out ~/audio --out-ext mp3 \\
           --voices-dir ~/voices --voice Emma
     """
     # ── --list-voices utility ─────────────────────────────────────────────────
@@ -529,8 +529,20 @@ def main(
                     silence_between_chunks_ms=silence_ms,
                     crossfade_ms=crossfade_ms,
                     segmenter_config=seg_config,
-                    verbose=verbose,
+                    verbose=False,
                 )
+
+                def _on_chunk(i, total, chunk_text):
+                    preview = chunk_text[:60].replace("\n", " ")
+                    click.echo(f"  [{i+1}/{total}] {preview!r}")
+
+                def _on_chunk_done(i, total, stats):
+                    click.echo(
+                        f"         audio: {stats['audio_duration_s']:.2f}s | "
+                        f"wall: {stats['wall_time_s']:.1f}s | "
+                        f"{stats['realtime_factor']:.1f}x realtime"
+                    )
+
                 audio = synthesize_long(
                     input_text,
                     tts=tts,
@@ -552,6 +564,8 @@ def main(
                     gpt_temperature=gpt_temperature,
                     top_k=top_k,
                     config=long_config,
+                    on_chunk=_on_chunk,
+                    on_chunk_done=_on_chunk_done,
                 )
                 if sample_rate != 22050:
                     import librosa as _librosa
@@ -748,4 +762,4 @@ def _write_mp3(audio: np.ndarray, sample_rate: int, path: Path) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    synthesize()
