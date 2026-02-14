@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EmotionConfig",
+  "type": "object",
+  "required": ["version", "vector_order", "emotions"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "vector_order": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": { "type": "string" }
+    },
+    "emotions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["base"],
+        "properties": {
+          "base": {
+            "type": "object",
+            "required": ["emo_vector", "emo_alpha"],
+            "properties": {
+              "emo_vector": {
+                "type": "array",
+                "minItems": 8,
+                "maxItems": 8,
+                "items": { "type": "number" }
+              },
+              "emo_alpha": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "drift": {
+            "type": "object",
+            "properties": {
+              "vector_sigma": {
+                "type": "array",
+                "minItems": 8,
+                "maxItems": 8,
+                "items": { "type": "number", "minimum": 0 }
+              },
+              "alpha_sigma": {
+                "type": "number",
+                "minimum": 0
+              },
+              "smoothing": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

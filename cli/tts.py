@@ -261,10 +261,16 @@ def add_options(options):
     help="Segment audio cache directory (JSONL mode).",
 )
 @click.option(
-    "--emotions-json",
+    "--emotion-config",
     default=None,
     type=click.Path(),
-    help="Path to emotions.json mapping emotion labels to emo-vector/emo-alpha (JSONL mode). Auto-detected from --voices-dir if not set.",
+    help="Path to emotions.json preset config (JSONL mode). Auto-detected from --voices-dir if not set.",
+)
+@click.option(
+    "--enable-drift",
+    is_flag=True,
+    default=False,
+    help="Apply bounded per-segment drift to emotion vectors (JSONL mode).",
 )
 @click.option(
     "--end-chime",
@@ -313,7 +319,8 @@ def main(
     weights_dir,
     bpe_model,
     cache_dir,
-    emotions_json,
+    emotion_config,
+    enable_drift,
     end_chime,
     do_list_voices,
     verbose,
@@ -438,7 +445,8 @@ def main(
             silence_between_chunks_ms=silence_ms,
             crossfade_ms=crossfade_ms,
             cache_dir=cache_dir,
-            emotions_json=emotions_json,
+            emotion_config=emotion_config,
+            enable_drift=enable_drift,
             end_chime=end_chime,
             verbose=True,
         )

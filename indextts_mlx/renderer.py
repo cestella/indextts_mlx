@@ -17,39 +17,11 @@ from typing import Any, Dict, List, Optional, Union
 from .pipeline import IndexTTS2, OUTPUT_SAMPLE_RATE
 from .normalizer import Normalizer, NormalizerConfig
 from .synthesize_long import synthesize_long
+from .emotion_config import EmotionResolver
 from .voices import parse_emo_vector
 
 # Sentinel so we can distinguish "not passed" from None
 _UNSET = object()
-
-
-def _load_emotions_map(emotions_json: Optional[Union[str, Path]]) -> Dict:
-    """Load emotions.json into a dict keyed by label name.
-
-    Returns an empty dict if path is None or file doesn't exist.
-    """
-    if emotions_json is None:
-        return {}
-    p = Path(emotions_json)
-    if not p.exists():
-        warnings.warn(f"emotions.json not found at {p} — emotion labels will be ignored")
-        return {}
-    with p.open() as f:
-        return json.load(f)
-
-
-def _resolve_emotions_json(
-    explicit: Optional[Union[str, Path]],
-    voices_dir: Optional[Union[str, Path]],
-) -> Optional[Path]:
-    """Find emotions.json: explicit path > voices_dir/emotions.json."""
-    if explicit is not None:
-        return Path(explicit)
-    if voices_dir is not None:
-        candidate = Path(voices_dir) / "emotions.json"
-        if candidate.exists():
-            return candidate
-    return None
 
 # Silence padding value
 _SILENCE = np.float32(0.0)
@@ -156,8 +128,10 @@ def render_segments_jsonl(
     cache_dir: Optional[Union[str, Path]] = None,
     # Model version string (for cache key)
     model_version: str = "indextts2-mlx-v1",
-    # Emotion label → vector/alpha map (path to emotions.json, or auto-detected from voices_dir)
-    emotions_json: Optional[Union[str, Path]] = None,
+    # Emotion preset config (path to emotions.json, or auto-detected from voices_dir)
+    emotion_config: Optional[Union[str, Path]] = None,
+    # Enable per-segment drift (bounded Gaussian noise + EMA smoothing)
+    enable_drift: bool = False,
     # Optional audio file appended after the last segment (e.g. a chapter-end chime)
     end_chime: Optional[Union[str, Path]] = None,
     verbose: bool = True,
@@ -189,9 +163,12 @@ def render_segments_jsonl(
     if cache_dir:
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # Resolve and load emotions map (label → emo-vector / emo-alpha)
-    _emotions_json_path = _resolve_emotions_json(emotions_json, voices_dir)
-    emotions_map = _load_emotions_map(_emotions_json_path)
+    # Build the emotion resolver (auto-discovers emotions.json from voices_dir if not explicit)
+    resolver = EmotionResolver.from_voices_dir(
+        voices_dir=voices_dir,
+        explicit_path=emotion_config,
+        enable_drift=enable_drift,
+    )
 
     # Load JSONL
     records: List[Dict] = []
@@ -253,20 +230,16 @@ def render_segments_jsonl(
         pause_after = int(record.get("pause_after_ms", 0))
 
         # ── Emotion label resolution ──────────────────────────────────────────
-        # If the segment carries a string emotion label (from the classifier)
-        # and has no explicit emo_vector/emo_alpha, resolve from emotions_map.
-        emotion_label = _rec_emotion
-        if (
-            isinstance(emotion_label, str)
-            and emotion_label in emotions_map
-            and record.get("emo_vector") is None
-            and record.get("emo_alpha") is None
-        ):
-            entry = emotions_map[emotion_label]
-            if seg_emo_vector is None:
-                seg_emo_vector = entry.get("emo-vector")
-            if seg_emo_alpha == 0.0:
-                seg_emo_alpha = float(entry.get("emo-alpha", 0.0))
+        # If a resolver is available, use it to map the emotion label to
+        # (emo_vector, emo_alpha). Per-segment explicit fields take precedence
+        # over the preset; global CLI defaults do not override the preset.
+        emotion_label = _rec_emotion if isinstance(_rec_emotion, str) else None
+        if resolver is not None:
+            seg_emo_vector, seg_emo_alpha = resolver.resolve(
+                label=emotion_label,
+                override_vector=record.get("emo_vector"),
+                override_alpha=record.get("emo_alpha"),
+            )
 
         # Resolve effective spk source string for cache key
         if seg_spk is not None:
@@ -310,8 +283,13 @@ def render_segments_jsonl(
             if verbose:
                 preview = text[:60] + ("..." if len(text) > 60 else "")
                 emotion_tag = f" [{emotion_label}]" if emotion_label else ""
+                if enable_drift and emotion_label and seg_emo_vector is not None:
+                    vec_str = "[" + ", ".join(f"{v:.3f}" for v in seg_emo_vector) + "]"
+                    drift_tag = f" α={seg_emo_alpha:.3f} v={vec_str}"
+                else:
+                    drift_tag = ""
                 print(
-                    f"  [{idx+1}/{total_segments}] seg={seg_id!r}{emotion_tag}"
+                    f"  [{idx+1}/{total_segments}] seg={seg_id!r}{emotion_tag}{drift_tag}"
                     f" synthesizing: {preview!r}"
                 )
 

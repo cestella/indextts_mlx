@@ -31,78 +31,90 @@ EMOTION_LABELS = [
 ]
 
 _PROMPT_TEMPLATE = """\
-You are an audiobook narration emotion classifier.
+You are an audiobook delivery classifier.
 
-Your task is to select the most appropriate narration emotion \
-for a single sentence, given its paragraph context.
+Your task is NOT to classify the emotional content of a sentence.
 
-This is for professional long-form audiobook narration.
-The style must be restrained, natural, and never theatrical.
+Your task is to decide whether a professional audiobook narrator
+would audibly change vocal delivery from neutral narration
+for this sentence, given its paragraph context.
 
-CRITICAL RULES:
+This is professional long-form narration.
+Narrators maintain a steady, neutral delivery almost all the time.
+Emotion shifts are rare and deliberate.
 
-- Neutral should be chosen for most sentences.
-- Only select a non-neutral emotion if there is strong, clear textual evidence.
-- Avoid over-dramatization.
-- Prefer subtlety over intensity.
-- If unsure, choose neutral (0).
-- Do not infer emotions that are not clearly supported by the text.
-- Do not exaggerate punctuation (e.g., a single "!" does not automatically justify strong emotion).
-- Use the context paragraph to understand the emotional register, but only elevate a sentence if the context contains explicit, unambiguous emotional signals (e.g., a death, a direct threat, a stated grief). Inconvenience, mild disruption, or physical description alone are not emotional signals.
+PRIMARY DECISION:
 
-MILD_EMPHASIS (1) — STRICT USAGE:
+First ask yourself:
+Would a skilled narrator actually change their vocal tone here?
 
-Mild_emphasis is structurally rare. In a typical passage of 10 sentences, expect zero or one instance at most. If you are assigning it to several sentences in a row, you are wrong — revert to neutral.
+If the answer is no, output 0 (neutral).
 
-It applies ONLY when the sentence has an explicit structural or grammatical marker that forces a different delivery:
-  - Direct address to the reader: "Admit it." / "Consider this." / "You already know the answer."
-  - A one- or two-word isolated sentence used as a deliberate punch: "He was wrong." after several long sentences building an argument.
-  - A sentence with explicit textual stress markers: italics, em-dash used for isolation, or grammatical inversion for stress ("This, and only this, was what mattered.").
-  - An explicit exclamation that is not joyful, indignant, or another labelled emotion.
+Only if the answer is clearly yes should you select a non-neutral label.
 
-mild_emphasis is NEVER appropriate for:
-  - Discursive, analytical, essayistic, or argumentative prose, regardless of how strong the opinion is.
-  - Wit, irony, or dry humour. Clever phrasing is not emphasis.
-  - Historical, political, or biographical commentary.
-  - Any sentence that is merely interesting, surprising, or thought-provoking.
-  - Rhetorical questions embedded in an essay or narrative.
-  - Sentences that introduce or summarise an idea.
-  - Consecutive sentences — mild_emphasis cannot apply to two sentences in a row unless each independently meets the structural test above.
+CRITICAL PRINCIPLE:
 
-Rule: if you cannot identify a specific structural marker in the sentence itself that demands a different delivery, choose neutral.
+A narrator almost never shifts emotion in expository, analytical,
+historical, or essayistic prose.
 
-JOYFUL (3) — COMMON FALSE POSITIVES TO AVOID:
+Even if a sentence contains words like "threatening", "dramatic",
+"extraordinary", or evaluative language, that does NOT mean
+the narrator changes tone.
 
-- Small practical wins with "!" ("she made it!", "it worked!", "he caught the bus!") → neutral or mild_emphasis, NOT joyful. A single exclamation mark in a mundane context is not joy.
-- Social phrases of disappointment or commiseration ("what a shame", "terrible shame", "pity about X") → neutral or mild_emphasis, NOT joyful and NOT melancholic. These are mild social remarks, not genuine grief.
-- Mild satisfaction, being pleased, or low-key relief → neutral or mild_emphasis, NOT joyful.
-- Joyful requires a clearly sustained, significant happiness: reunion after long separation, receiving wonderful news, profound relief after danger. If the surrounding context is mundane, do not upgrade positive sentences to joyful.
+The presence of emotional vocabulary does NOT imply a change in delivery.
 
-MELANCHOLIC (5) — COMMON FALSE POSITIVES TO AVOID:
+Neutral (0) should be chosen for the overwhelming majority of sentences.
 
-- Social disappointment phrases ("what a shame", "terrible shame", "pity about X", "what a pity") → neutral or mild_emphasis, NOT melancholic. Reserve melancholic for genuine grief, loss, or sustained sadness.
-- Minor setbacks, inconveniences, or things going wrong (rain, delays, cancelled plans) → neutral, NOT melancholic.
-- Melancholic requires genuine emotional weight: bereavement, irrecoverable loss, prolonged suffering, or deep regret. Inconvenience is not sadness.
+If unsure, choose 0.
+
+NON-NEUTRAL LABELS (USE RARELY):
+
+1 = mild_emphasis
+Only when the sentence structurally demands a different delivery.
+This must be visible in the sentence itself:
+- Direct address: "Admit it."
+- A short, isolated punch sentence after buildup.
+- Clear structural stress markers (colon introducing emphasis, deliberate inversion).
+- A true exclamation that is not joyful or indignant.
+
+Never use mild_emphasis for:
+- Analytical prose
+- Historical commentary
+- Wit or dry humour
+- Rhetorical questions in essays
+- Mere interesting or surprising statements
+
+3 = joyful
+Only when the narrator would audibly sound happy.
+Requires sustained, significant happiness.
+Not small wins.
+Not mild satisfaction.
+Not polite enthusiasm.
+
+4 = suspense
+Only when the narration describes an unfolding moment of tension,
+uncertainty, or imminent danger.
+Not conceptual threats.
+Not analytical discussion of risk.
+Not historical danger described at a distance.
+
+5 = melancholic
+Only when the narrator would audibly sound heavy or sorrowful.
+Requires genuine emotional weight.
+Not inconvenience.
+Not abstract sadness.
+Not reflective tone alone.
+
+Rule: If you cannot clearly imagine a narrator changing vocal delivery,
+output 0.
 
 OUTPUT RULES:
 
-- You must output exactly ONE digit.
-- The digit must be one of: 0, 1, 2, 3, 4, 5, 6
-- Do NOT output words.
-- Do NOT output JSON.
-- Do NOT output explanations.
-- Do NOT output whitespace before or after the digit.
-- Any output other than a single valid digit is incorrect.
-
-Emotion labels:
-
-0 = neutral                (standard narration, calm and steady)
-1 = mild_emphasis          (structural stress only — direct address, deliberate punch, explicit marker; rare)
-2 = indignant              (controlled self-righteous firmness)
-3 = joyful                 (warm, grounded happiness or relief — requires strong evidence)
-4 = suspense               (tension, unease, anticipation)
-5 = melancholic            (reflective, sad, heavy tone)
-6 = calm_authority         (measured, confident, speech-like tone)
+- Output exactly ONE digit.
+- Must be one of: 0, 1, 2, 3, 4, 5
+- No words.
+- No explanation.
+- No whitespace.
 
 Context paragraph:
 <<<
