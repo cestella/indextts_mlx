@@ -261,3 +261,60 @@ class TestSegmenterIntegration:
         combined = " ".join(chunks)
         assert "Dr" in combined
         assert "Smith" in combined
+
+
+class TestNormalizeSentence:
+    """Tests for Segmenter._normalize_sentence (static method, no spaCy needed)."""
+
+    def test_em_dash_replaced(self) -> None:
+        s = Segmenter._normalize_sentence(
+            "We all like ideas that have already been had\u2014normal pi"
+        )
+        assert "\u2014" not in s
+        assert "--" in s
+
+    def test_en_dash_replaced(self) -> None:
+        s = Segmenter._normalize_sentence("She waited\u2013then she left")
+        assert "\u2013" not in s
+        assert "--" in s
+
+    def test_soft_hyphen_removed(self) -> None:
+        s = Segmenter._normalize_sentence("un\u00adbelievable")
+        assert "\u00ad" not in s
+        assert "unbelievable" in s
+
+    def test_non_breaking_hyphen_normalized(self) -> None:
+        s = Segmenter._normalize_sentence("well\u2011known")
+        assert "\u2011" not in s
+        assert "well-known" in s
+
+    def test_adds_terminal_period(self) -> None:
+        s = Segmenter._normalize_sentence("Introduction")
+        assert s == "Introduction."
+
+    def test_preserves_question_mark(self) -> None:
+        s = Segmenter._normalize_sentence("Are you sure?")
+        assert s.endswith("?")
+        assert not s.endswith("?.")
+
+    def test_preserves_exclamation(self) -> None:
+        s = Segmenter._normalize_sentence("Stop!")
+        assert s.endswith("!")
+
+    def test_preserves_existing_period(self) -> None:
+        s = Segmenter._normalize_sentence("Hello world.")
+        assert s == "Hello world."
+
+    def test_multiple_dashes_collapsed(self) -> None:
+        s = Segmenter._normalize_sentence("a\u2013\u2013b")
+        assert "--" in s
+        # Should not have "-- --" (multiple replacements should collapse)
+        assert "-- --" not in s
+
+    def test_empty_string(self) -> None:
+        s = Segmenter._normalize_sentence("")
+        assert s == ""
+
+    def test_sentence_ending_colon_preserved(self) -> None:
+        s = Segmenter._normalize_sentence("Ingredients:")
+        assert s.endswith(":")

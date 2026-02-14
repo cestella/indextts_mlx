@@ -18,6 +18,8 @@ Install::
 
 from __future__ import annotations
 
+import re
+import unicodedata
 import warnings
 from dataclasses import dataclass, field
 from typing import Any, Iterator, List, Literal, Optional
@@ -245,7 +247,7 @@ class Segmenter:
         chunks: List[str] = []
         current = ""
         for sent in sents:
-            s = sent.text.strip()
+            s = self._normalize_sentence(sent.text.strip())
             if not s:
                 continue
             if len(s) > self.config.max_chars:
@@ -268,7 +270,7 @@ class Segmenter:
         current_sents: List[str] = []
         current_count = 0
         for sent in sents:
-            s = sent.text.strip()
+            s = self._normalize_sentence(sent.text.strip())
             if not s:
                 continue
             n = len(tokenizer.Encode(s))
@@ -290,7 +292,7 @@ class Segmenter:
         chunks: List[str] = []
         current: List[str] = []
         for sent in sents:
-            s = sent.text.strip()
+            s = self._normalize_sentence(sent.text.strip())
             if not s:
                 continue
             current.append(s)
@@ -311,6 +313,37 @@ class Segmenter:
             else:
                 merged.append(chunk)
         return merged
+
+    # ── punctuation normalization ─────────────────────────────────────────────
+
+    @staticmethod
+    def _normalize_sentence(s: str) -> str:
+        """Normalize a sentence for TTS consumption.
+
+        - Replaces em-dash / en-dash / horizontal bar / swung dash variants
+          with `` -- `` (readable pause) or strips soft hyphens.
+        - Replaces non-breaking hyphens with regular hyphens.
+        - Collapses multiple spaces.
+        - Ensures the sentence ends with terminal punctuation (. ? !).
+        """
+        # Soft hyphen (U+00AD) — invisible, just remove
+        s = s.replace("\u00ad", "")
+
+        # Non-breaking hyphen (U+2011) → regular hyphen
+        s = s.replace("\u2011", "-")
+
+        # Em-dash (U+2014), en-dash (U+2013), horizontal bar (U+2015),
+        # swung dash (U+2053), figure dash (U+2012) → " -- "
+        s = re.sub(r"[\u2012\u2013\u2014\u2015\u2053]+", " -- ", s)
+
+        # Collapse any runs of whitespace produced by the above
+        s = re.sub(r"  +", " ", s).strip()
+
+        # Ensure terminal punctuation
+        if s and s[-1] not in ".?!:":
+            s = s + "."
+
+        return s
 
     def _hard_split(self, text: str) -> List[str]:
         warnings.warn(

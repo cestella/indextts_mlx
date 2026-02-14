@@ -1,0 +1,30 @@
+{
+  "neutral" : {
+    "emo-vector" : [0,0,0,0,0,0,0,0.3],
+    "emo-alpha" : 0.1
+  },
+  "mild_emphasis" : {
+    "emo-vector" : [0.2,0,0,0,0,0,0.05,0.65],
+    "emo-alpha" : 0.28
+  },
+  "indignant" : {
+    "emo-vector" : [0.05,0.32,0,0.12,0,0.35,0.03,0.48],
+    "emo-alpha" : 0.34
+  },
+  "joyful" : {
+    "emo-vector" : [0.42,0.05,0,0,0,0.22,0,0.58],
+    "emo-alpha" : 0.3
+  },
+  "suspense" : {
+    "emo-vector" : [0,0,0,0,0,0,0,0.3],
+    "emo-alpha" : 0.1
+  },
+  "melancholic" : {
+    "emo-vector" : [0,0,0,0,0,0,0,0.3],
+    "emo-alpha" : 0.1
+  },
+  "calm_authority" : {
+    "emo-vector" : [0,0,0,0,0,0,0,0.3],
+    "emo-alpha" : 0.1
+  }
+}
