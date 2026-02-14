@@ -73,7 +73,7 @@ class Snake(nn.Module):
 
         # Snake: x + (1/α) * sin²(xα)
         sin_term = mx.sin(x * alpha)
-        result = x + (1.0 / (alpha + self.no_div_by_zero)) * (sin_term ** 2)
+        result = x + (1.0 / (alpha + self.no_div_by_zero)) * (sin_term**2)
 
         return result
 
@@ -148,7 +148,7 @@ class SnakeBeta(nn.Module):
 
         # SnakeBeta: x + (1/β) * sin²(xα)
         sin_term = mx.sin(x * alpha)
-        result = x + (1.0 / (beta + self.no_div_by_zero)) * (sin_term ** 2)
+        result = x + (1.0 / (beta + self.no_div_by_zero)) * (sin_term**2)
 
         return result
 

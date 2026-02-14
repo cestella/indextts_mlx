@@ -3,6 +3,7 @@
 Reads a JSONL file (one JSON object per line, schema: schemas/segment.schema.json),
 synthesizes each segment, inserts silence pauses, concatenates, and writes a WAV.
 """
+
 from __future__ import annotations
 
 import json
@@ -187,7 +188,9 @@ def render_segments_jsonl(
         seg_cfm_steps = int(_merge(cfm_steps, record.get("cfm_steps", None)) or cfm_steps)
         seg_temperature = float(_merge(temperature, record.get("temperature", None)) or temperature)
         seg_cfg_rate = float(_merge(cfg_rate, record.get("cfg_rate", None)) or cfg_rate)
-        seg_gpt_temperature = float(_merge(gpt_temperature, record.get("gpt_temperature", None)) or gpt_temperature)
+        seg_gpt_temperature = float(
+            _merge(gpt_temperature, record.get("gpt_temperature", None)) or gpt_temperature
+        )
         seg_top_k = int(_merge(top_k, record.get("top_k", None)) or top_k)
         seg_max_codes = int(_merge(max_codes, record.get("max_codes", None)) or max_codes)
         seg_sample_rate = int(_merge(sample_rate, record.get("sample_rate", None)) or sample_rate)
@@ -208,17 +211,29 @@ def render_segments_jsonl(
         cached_audio = None
         if cache_dir:
             cache_key = _segment_cache_key(
-                model_version, text, spk_source_key,
-                seg_emotion, seg_emo_alpha, seg_emo_vector, seg_emo_text,
-                seg_seed, seg_use_random,
-                seg_cfm_steps, seg_temperature, seg_cfg_rate,
-                seg_gpt_temperature, seg_top_k, seg_sample_rate,
+                model_version,
+                text,
+                spk_source_key,
+                seg_emotion,
+                seg_emo_alpha,
+                seg_emo_vector,
+                seg_emo_text,
+                seg_seed,
+                seg_use_random,
+                seg_cfm_steps,
+                seg_temperature,
+                seg_cfg_rate,
+                seg_gpt_temperature,
+                seg_top_k,
+                seg_sample_rate,
             )
             cache_file = cache_dir / f"{cache_key}.npy"
             if cache_file.exists():
                 cached_audio = np.load(str(cache_file))
                 if verbose:
-                    print(f"  [{idx+1}/{total_segments}] seg={seg_id!r} (cached) {len(cached_audio)/seg_sample_rate:.2f}s")
+                    print(
+                        f"  [{idx+1}/{total_segments}] seg={seg_id!r} (cached) {len(cached_audio)/seg_sample_rate:.2f}s"
+                    )
 
         if cached_audio is None:
             if verbose:
@@ -249,6 +264,7 @@ def render_segments_jsonl(
             # Resample if needed
             if seg_sample_rate != OUTPUT_SAMPLE_RATE:
                 import librosa
+
                 seg_audio = librosa.resample(
                     seg_audio, orig_sr=OUTPUT_SAMPLE_RATE, target_sr=seg_sample_rate
                 ).astype(np.float32)

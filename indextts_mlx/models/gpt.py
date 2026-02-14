@@ -133,7 +133,7 @@ class UnifiedVoice(nn.Module):
         )
 
         # Emotion vector layers
-        self.emovec_layer = nn.Linear(1024, model_dim)   # (1024 → 1280)
+        self.emovec_layer = nn.Linear(1024, model_dim)  # (1024 → 1280)
         self.emo_layer = nn.Linear(model_dim, model_dim)  # (1280 → 1280)
 
         # Duration/speed embeddings (2 entries: speed_emb(0)=normal, speed_emb(1)=half)
@@ -183,7 +183,9 @@ class UnifiedVoice(nn.Module):
 
         return cond_latents
 
-    def get_emo_conditioning(self, mel: mx.array, mel_lengths: Optional[mx.array] = None) -> mx.array:
+    def get_emo_conditioning(
+        self, mel: mx.array, mel_lengths: Optional[mx.array] = None
+    ) -> mx.array:
         """Encode mel to emotion vector.
 
         Args:
@@ -197,8 +199,8 @@ class UnifiedVoice(nn.Module):
         # emo_perceiver produces (B, 1, 1024) → squeeze to (B, 1024)
         emo_raw = self.emo_perceiver_encoder(encoded, mask)  # (B, 1, 1024)
         emo_raw = emo_raw[:, 0, :]  # (B, 1024)
-        emo_vec = self.emovec_layer(emo_raw)   # (B, 1280)
-        emo_vec = self.emo_layer(emo_vec)      # (B, 1280)
+        emo_vec = self.emovec_layer(emo_raw)  # (B, 1280)
+        emo_vec = self.emo_layer(emo_vec)  # (B, 1280)
         return emo_vec
 
     def get_full_conditioning_34(
@@ -242,14 +244,17 @@ class UnifiedVoice(nn.Module):
         norm_idx = mx.array([0] * B)  # speed_emb(0) = duration_emb
 
         duration_emb_half = self.speed_emb(half_idx)  # (B, 1280)
-        duration_emb = self.speed_emb(norm_idx)        # (B, 1280)
+        duration_emb = self.speed_emb(norm_idx)  # (B, 1280)
 
         # Concatenate: [cond_with_emo (32) || duration_half (1) || duration (1)]
-        cond_34 = mx.concatenate([
-            cond_with_emo,
-            duration_emb_half[:, None, :],  # (B, 1, 1280)
-            duration_emb[:, None, :],       # (B, 1, 1280)
-        ], axis=1)  # (B, 34, 1280)
+        cond_34 = mx.concatenate(
+            [
+                cond_with_emo,
+                duration_emb_half[:, None, :],  # (B, 1, 1280)
+                duration_emb[:, None, :],  # (B, 1, 1280)
+            ],
+            axis=1,
+        )  # (B, 34, 1280)
 
         return cond_34
 
@@ -280,15 +285,15 @@ class UnifiedVoice(nn.Module):
             tokens_np = np.array(text_tokens[b])
 
             # Remove any existing START (0) or STOP (1) tokens
-            valid_indices = np.where((tokens_np != START_TEXT_TOKEN) & (tokens_np != STOP_TEXT_TOKEN))[0]
+            valid_indices = np.where(
+                (tokens_np != START_TEXT_TOKEN) & (tokens_np != STOP_TEXT_TOKEN)
+            )[0]
             valid_tokens = tokens_np[valid_indices]
 
             # Add START at beginning and STOP at end: [0, ...tokens..., 1]
-            wrapped_tokens = np.concatenate([
-                np.array([START_TEXT_TOKEN]),
-                valid_tokens,
-                np.array([STOP_TEXT_TOKEN])
-            ])
+            wrapped_tokens = np.concatenate(
+                [np.array([START_TEXT_TOKEN]), valid_tokens, np.array([STOP_TEXT_TOKEN])]
+            )
             text_tokens_list.append(mx.array(wrapped_tokens))
 
         # Stack wrapped tokens
@@ -302,7 +307,9 @@ class UnifiedVoice(nn.Module):
         text_emb = text_emb + text_pos_emb[None, :, :]  # Broadcast to (B, T_text + 2, model_dim)
 
         # Concatenate conditioning and text embeddings
-        inputs_embeds = mx.concatenate([cond_latents, text_emb], axis=1)  # (B, num_latents + T_text + 2, model_dim)
+        inputs_embeds = mx.concatenate(
+            [cond_latents, text_emb], axis=1
+        )  # (B, num_latents + T_text + 2, model_dim)
 
         # Attention mask (attend to all tokens)
         attention_mask = mx.ones((B, inputs_embeds.shape[1]), dtype=mx.int32)
@@ -366,13 +373,13 @@ class UnifiedVoice(nn.Module):
         text_tokens_list = []
         for b in range(B):
             tokens_np = np.array(text_tokens[b])
-            valid_indices = np.where((tokens_np != START_TEXT_TOKEN) & (tokens_np != STOP_TEXT_TOKEN))[0]
+            valid_indices = np.where(
+                (tokens_np != START_TEXT_TOKEN) & (tokens_np != STOP_TEXT_TOKEN)
+            )[0]
             valid_tokens = tokens_np[valid_indices]
-            wrapped_tokens = np.concatenate([
-                np.array([START_TEXT_TOKEN]),
-                valid_tokens,
-                np.array([STOP_TEXT_TOKEN])
-            ])
+            wrapped_tokens = np.concatenate(
+                [np.array([START_TEXT_TOKEN]), valid_tokens, np.array([STOP_TEXT_TOKEN])]
+            )
             text_tokens_list.append(mx.array(wrapped_tokens))
         text_tokens_wrapped = mx.stack(text_tokens_list, axis=0)
         text_emb = self.text_embedding(text_tokens_wrapped)
@@ -406,7 +413,7 @@ class UnifiedVoice(nn.Module):
         # Extract mel hidden states (positions after cond + text, then strip last 2)
         # PyTorch: get_logits extracts mel portion, then returns mel_logits[:, :-2]
         n_cond = cond_latents.shape[1]
-        mel_hidden = hidden_states[:, n_cond + T_text_wrapped:, :]  # (B, T_mel+2, model_dim)
+        mel_hidden = hidden_states[:, n_cond + T_text_wrapped :, :]  # (B, T_mel+2, model_dim)
         mel_hidden = mel_hidden[:, :-2, :]  # (B, T_mel, model_dim) - strip last 2
 
         return mel_hidden
@@ -461,7 +468,9 @@ class UnifiedVoice(nn.Module):
                     # Add MEL positional embedding
                     # PyTorch's text_pos_embedding.forward() returns position 0 for sequence length 1
                     mel_pos_idx = 0
-                    start_mel_pos = self.mel_pos_embedding.emb(mx.array([mel_pos_idx]))  # (1, model_dim)
+                    start_mel_pos = self.mel_pos_embedding.emb(
+                        mx.array([mel_pos_idx])
+                    )  # (1, model_dim)
                     start_mel_emb = start_mel_emb + start_mel_pos[None, :, :]
 
                     # Concatenate: [conditioning + text] (43) + START_MEL (1) = 44 tokens
@@ -476,7 +485,7 @@ class UnifiedVoice(nn.Module):
                     for i in range(mel_embs.shape[1]):
                         if i < self.mel_pos_embedding.emb.weight.shape[0]:
                             pos_emb = self.mel_pos_embedding.emb(mx.array([i]))  # (1, model_dim)
-                            mel_embs = mel_embs.at[:, i:i+1, :].add(pos_emb[None, :, :])
+                            mel_embs = mel_embs.at[:, i : i + 1, :].add(pos_emb[None, :, :])
 
                     # Concatenate conditioning + text + mel
                     current_input = mx.concatenate([inputs_embeds, mel_embs], axis=1)
@@ -531,9 +540,13 @@ class UnifiedVoice(nn.Module):
             if len(generated[0]) <= 3:
                 sorted_indices = mx.argsort(probs[0])[::-1][:5]
                 sorted_probs = probs[0][sorted_indices]
-                print(f"  Step {len(generated[0])}: top tokens = {sorted_indices.tolist()}, probs = {sorted_probs.tolist()}")
+                print(
+                    f"  Step {len(generated[0])}: top tokens = {sorted_indices.tolist()}, probs = {sorted_probs.tolist()}"
+                )
                 print(f"    logits range: [{logits[0].min():.2f}, {logits[0].max():.2f}]")
-                print(f"    hidden_states shape: {hidden_states.shape}, last_hidden range: [{last_hidden.min():.2f}, {last_hidden.max():.2f}]")
+                print(
+                    f"    hidden_states shape: {hidden_states.shape}, last_hidden range: [{last_hidden.min():.2f}, {last_hidden.max():.2f}]"
+                )
                 if len(generated[0]) == 2:
                     print(f"    pos_idx for this token: {len(generated[0]) - 1}")
                     print(f"    current_input shape: {current_input.shape}")
@@ -559,7 +572,7 @@ class UnifiedVoice(nn.Module):
         max_gen_len = max(len(g) for g in generated)
         generated_array = mx.zeros((B, max_gen_len), dtype=mx.int32)
         for b in range(B):
-            generated_array[b, :len(generated[b])] = mx.array(generated[b])
+            generated_array[b, : len(generated[b])] = mx.array(generated[b])
 
         return generated_array
 

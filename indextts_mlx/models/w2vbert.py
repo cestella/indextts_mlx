@@ -76,7 +76,7 @@ class Wav2Vec2BertSelfAttention(nn.Module):
         # Position IDs for query and key
         query_length, key_length = T, T
         position_ids_l = mx.arange(query_length).reshape(-1, 1)  # (query_len, 1)
-        position_ids_r = mx.arange(key_length).reshape(1, -1)    # (1, key_len)
+        position_ids_r = mx.arange(key_length).reshape(1, -1)  # (1, key_len)
 
         # Compute distance and clamp to valid range
         distance = position_ids_r - position_ids_l  # (query_len, key_len)
@@ -96,8 +96,7 @@ class Wav2Vec2BertSelfAttention(nn.Module):
         # Q: (B, H, T, D), positional_embedding: (T, T, D)
         # einsum "bhld,lrd->bhlr"
         relative_position_attn_weights = mx.sum(
-            Q[:, :, :, None, :] * positional_embedding[None, None, :, :, :],
-            axis=-1
+            Q[:, :, :, None, :] * positional_embedding[None, None, :, :, :], axis=-1
         )  # (B, H, query_len, key_len)
 
         # Add to scores (with scaling)
@@ -135,8 +134,12 @@ class Wav2Vec2BertConformerConvolution(nn.Module):
         # Depthwise conv (groups=hidden_size for depthwise)
         # No padding - we'll do manual left padding for causal convolution
         self.depthwise_conv = nn.Conv1d(
-            hidden_size, hidden_size, kernel_size=kernel_size,
-            padding=0, groups=hidden_size, bias=False
+            hidden_size,
+            hidden_size,
+            kernel_size=kernel_size,
+            padding=0,
+            groups=hidden_size,
+            bias=False,
         )
         self.depthwise_layer_norm = nn.LayerNorm(hidden_size)
 
@@ -201,8 +204,14 @@ class Wav2Vec2BertFeedForward(nn.Module):
 class Wav2Vec2BertConformerLayer(nn.Module):
     """Conformer encoder layer: FFN + Attention + Conv + FFN."""
 
-    def __init__(self, hidden_size: int, num_heads: int, intermediate_size: int,
-                 conv_kernel_size: int = 31, dropout: float = 0.0):
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        intermediate_size: int,
+        conv_kernel_size: int = 31,
+        dropout: float = 0.0,
+    ):
         super().__init__()
 
         # First FFN (half-step)
@@ -269,17 +278,21 @@ class Wav2Vec2BertEncoder(nn.Module):
 
         self.layers = [
             Wav2Vec2BertConformerLayer(
-                hidden_size=config['hidden_size'],
-                num_heads=config['num_attention_heads'],
-                intermediate_size=config['intermediate_size'],
-                conv_kernel_size=config['conv_depthwise_kernel_size'],
-                dropout=config.get('hidden_dropout', 0.0)
+                hidden_size=config["hidden_size"],
+                num_heads=config["num_attention_heads"],
+                intermediate_size=config["intermediate_size"],
+                conv_kernel_size=config["conv_depthwise_kernel_size"],
+                dropout=config.get("hidden_dropout", 0.0),
             )
-            for _ in range(config['num_hidden_layers'])
+            for _ in range(config["num_hidden_layers"])
         ]
 
-    def __call__(self, x: mx.array, attention_mask: Optional[mx.array] = None,
-                 output_hidden_states: bool = False) -> Tuple:
+    def __call__(
+        self,
+        x: mx.array,
+        attention_mask: Optional[mx.array] = None,
+        output_hidden_states: bool = False,
+    ) -> Tuple:
         """
         Args:
             x: (B, T, C)
@@ -327,8 +340,7 @@ class Wav2Vec2BertModel(nn.Module):
 
         # Feature projection: 160 -> 1024
         self.feature_projection = FeatureProjection(
-            config['feature_projection_input_dim'],
-            config['hidden_size']
+            config["feature_projection_input_dim"], config["hidden_size"]
         )
 
         # Position embeddings (not used in base model, relative pos in attention)
@@ -340,8 +352,12 @@ class Wav2Vec2BertModel(nn.Module):
         # Encoder
         self.encoder = Wav2Vec2BertEncoder(config)
 
-    def __call__(self, input_features: mx.array, attention_mask: Optional[mx.array] = None,
-                 output_hidden_states: bool = False):
+    def __call__(
+        self,
+        input_features: mx.array,
+        attention_mask: Optional[mx.array] = None,
+        output_hidden_states: bool = False,
+    ):
         """
         Args:
             input_features: (B, T, 160) - FBANK features from SeamlessM4T
@@ -372,15 +388,15 @@ class Wav2Vec2BertModel(nn.Module):
 def create_w2vbert_model(config_path: Optional[str] = None):
     """Create W2V-BERT model with default config."""
     config = {
-        'feature_projection_input_dim': 160,
-        'hidden_size': 1024,
-        'num_hidden_layers': 24,
-        'num_attention_heads': 16,
-        'intermediate_size': 4096,
-        'conv_depthwise_kernel_size': 31,
-        'hidden_dropout': 0.0,
-        'attention_dropout': 0.0,
-        'feat_proj_dropout': 0.0,
+        "feature_projection_input_dim": 160,
+        "hidden_size": 1024,
+        "num_hidden_layers": 24,
+        "num_attention_heads": 16,
+        "intermediate_size": 4096,
+        "conv_depthwise_kernel_size": 31,
+        "hidden_dropout": 0.0,
+        "attention_dropout": 0.0,
+        "feat_proj_dropout": 0.0,
     }
 
     return Wav2Vec2BertModel(config)

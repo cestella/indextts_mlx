@@ -68,10 +68,7 @@ class Attention(nn.Module):
         self.wo = nn.Linear(dim, dim, bias=False)
 
     def __call__(
-        self,
-        x: mx.array,
-        freqs_cis: mx.array,
-        mask: Optional[mx.array] = None
+        self, x: mx.array, freqs_cis: mx.array, mask: Optional[mx.array] = None
     ) -> mx.array:
         """Apply multi-head attention with RoPE.
 
@@ -176,7 +173,7 @@ class GPTFastTransformerBlock(nn.Module):
         conditioning: mx.array,
         freqs_cis: mx.array,
         skip_input: Optional[mx.array] = None,
-        mask: Optional[mx.array] = None
+        mask: Optional[mx.array] = None,
     ) -> tuple[mx.array, mx.array]:
         """Apply transformer block.
 
@@ -261,14 +258,12 @@ class GPTFastTransformer(nn.Module):
 
         # Precompute RoPE frequencies
         from .s2mel_layers import precompute_freqs_cis
+
         head_dim = dim // n_heads
         self.freqs_cis = precompute_freqs_cis(block_size, head_dim, int(rope_base))
 
     def __call__(
-        self,
-        x: mx.array,
-        conditioning: mx.array,
-        mask: Optional[mx.array] = None
+        self, x: mx.array, conditioning: mx.array, mask: Optional[mx.array] = None
     ) -> mx.array:
         """Apply transformer.
 
@@ -298,7 +293,9 @@ class GPTFastTransformer(nn.Module):
                 skip_connections.append(skip)
 
             # Middle layer (layer n//2): no skip connection
-            x, _ = self.layers[n_encoder_layers](x, conditioning, freqs_cis, skip_input=None, mask=mask)
+            x, _ = self.layers[n_encoder_layers](
+                x, conditioning, freqs_cis, skip_input=None, mask=mask
+            )
 
             # Decoder pass: use skip connections in reverse order (layers n//2+1 to n-1)
             for i in range(n_encoder_layers + 1, self.n_layers):

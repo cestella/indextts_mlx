@@ -45,37 +45,40 @@ def load_campplus_weights(weights_path: Path) -> Dict[str, mx.array]:
     # Process each weight
     for name, weight in pt_weights.items():
         # Skip PyTorch-specific parameters that don't exist in MLX
-        if 'num_batches_tracked' in name:
+        if "num_batches_tracked" in name:
             continue
 
         # Remove 'xvector.' prefix since MLX model doesn't have that container
-        if name.startswith('xvector.'):
+        if name.startswith("xvector."):
             name = name[8:]  # Remove 'xvector.'
 
         # Map PyTorch Sequential submodule names to MLX list indices
         # In PyTorch: nonlinear.batchnorm.weight
         # In MLX: nonlinear.0.weight (batchnorm is first in list for 'batchnorm-relu')
-        name = name.replace('.nonlinear.batchnorm.', '.nonlinear.0.')
-        name = name.replace('.nonlinear.relu.', '.nonlinear.1.')
+        name = name.replace(".nonlinear.batchnorm.", ".nonlinear.0.")
+        name = name.replace(".nonlinear.relu.", ".nonlinear.1.")
 
         # Handle nonlinear1 and nonlinear2 in DenseTDNNLayer
-        name = name.replace('.nonlinear1.batchnorm.', '.nonlinear1.0.')
-        name = name.replace('.nonlinear2.batchnorm.', '.nonlinear2.0.')
+        name = name.replace(".nonlinear1.batchnorm.", ".nonlinear1.0.")
+        name = name.replace(".nonlinear2.batchnorm.", ".nonlinear2.0.")
 
         # Handle out_nonlinear (at top level, no dot prefix)
-        if name.startswith('out_nonlinear.batchnorm.'):
-            name = name.replace('out_nonlinear.batchnorm.', 'out_nonlinear.0.')
-        elif name.startswith('out_nonlinear.relu.'):
-            name = name.replace('out_nonlinear.relu.', 'out_nonlinear.1.')
+        if name.startswith("out_nonlinear.batchnorm."):
+            name = name.replace("out_nonlinear.batchnorm.", "out_nonlinear.0.")
+        elif name.startswith("out_nonlinear.relu."):
+            name = name.replace("out_nonlinear.relu.", "out_nonlinear.1.")
 
         # Determine if it's a conv weight by checking name and shape
         # Conv2d can be named 'conv' or be in a shortcut (indexed as shortcut.0)
-        is_conv2d = ('.weight' in name and weight.ndim == 4 and
-                     ('conv' in name.lower() or '.0.weight' in name))
+        is_conv2d = (
+            ".weight" in name
+            and weight.ndim == 4
+            and ("conv" in name.lower() or ".0.weight" in name)
+        )
         # Conv1d weights have 3 dimensions and contain 'linear' in the name
         # This includes TDNN layers (linear), CAM layers (linear1, linear2, linear_local),
         # and transition/dense layers (linear)
-        is_conv1d = ('linear' in name.lower() and '.weight' in name and weight.ndim == 3)
+        is_conv1d = "linear" in name.lower() and ".weight" in name and weight.ndim == 3
 
         if is_conv2d:
             # Conv2d: transpose to MLX format
@@ -105,7 +108,7 @@ def set_module_weights(module, weights: Dict[str, mx.array], prefix: str = ""):
         return
 
     # Set direct weights
-    for attr_name in ['weight', 'bias', 'running_mean', 'running_var']:
+    for attr_name in ["weight", "bias", "running_mean", "running_var"]:
         full_name = f"{prefix}.{attr_name}" if prefix else attr_name
 
         if full_name in weights:
@@ -114,17 +117,17 @@ def set_module_weights(module, weights: Dict[str, mx.array], prefix: str = ""):
 
     # Recursively handle child modules
     for attr_name in dir(module):
-        if attr_name.startswith('_'):
+        if attr_name.startswith("_"):
             continue
 
         attr = getattr(module, attr_name)
 
         # Skip if it's a method or built-in
-        if callable(attr) and not hasattr(attr, '__self__'):
+        if callable(attr) and not hasattr(attr, "__self__"):
             continue
 
         # Handle nested modules
-        if hasattr(attr, '__dict__') or isinstance(attr, list):
+        if hasattr(attr, "__dict__") or isinstance(attr, list):
             child_prefix = f"{prefix}.{attr_name}" if prefix else attr_name
             set_module_weights(attr, weights, child_prefix)
 
@@ -141,7 +144,7 @@ def nested_dict_from_flat(flat_dict: Dict[str, mx.array]) -> Dict:
     nested = {}
 
     for key, value in flat_dict.items():
-        parts = key.split('.')
+        parts = key.split(".")
         current = nested
         parent = None
         parent_key = None
@@ -159,7 +162,7 @@ def nested_dict_from_flat(flat_dict: Dict[str, mx.array]) -> Dict:
                 if not isinstance(current, list):
                     # Get the previous key to update in parent
                     if i > 0:
-                        prev_key = parts[i-1]
+                        prev_key = parts[i - 1]
                         # Check what type parent[prev_key] is
                         if prev_key in parent and not isinstance(parent[prev_key], list):
                             parent[prev_key] = []
@@ -185,33 +188,33 @@ def nested_dict_from_flat(flat_dict: Dict[str, mx.array]) -> Dict:
         current[parts[-1]] = value
 
     # Convert block1, block2, block3 -> blocks: [...]
-    if 'block1' in nested:
+    if "block1" in nested:
         blocks = []
         i = 1
-        while f'block{i}' in nested:
-            block = nested.pop(f'block{i}')
+        while f"block{i}" in nested:
+            block = nested.pop(f"block{i}")
 
             # Within each block, convert tdnnd1, tdnnd2, ... -> layers: [...]
-            if 'tdnnd1' in block:
+            if "tdnnd1" in block:
                 layers = []
                 j = 1
-                while f'tdnnd{j}' in block:
-                    layers.append(block.pop(f'tdnnd{j}'))
+                while f"tdnnd{j}" in block:
+                    layers.append(block.pop(f"tdnnd{j}"))
                     j += 1
-                block['layers'] = layers
+                block["layers"] = layers
 
             blocks.append(block)
             i += 1
-        nested['blocks'] = blocks
+        nested["blocks"] = blocks
 
     # Convert transit1, transit2, transit3 -> transits: [...]
-    if 'transit1' in nested:
+    if "transit1" in nested:
         transits = []
         i = 1
-        while f'transit{i}' in nested:
-            transits.append(nested.pop(f'transit{i}'))
+        while f"transit{i}" in nested:
+            transits.append(nested.pop(f"transit{i}"))
             i += 1
-        nested['transits'] = transits
+        nested["transits"] = transits
 
     return nested
 

@@ -27,7 +27,7 @@ class RMSNorm(nn.Module):
             normalized: (B, T, dim)
         """
         # Normalize to unit norm
-        norm = mx.sqrt(mx.sum(x ** 2, axis=-1, keepdims=True) + 1e-8)
+        norm = mx.sqrt(mx.sum(x**2, axis=-1, keepdims=True) + 1e-8)
         x_norm = x / norm
 
         # Scale
@@ -79,7 +79,9 @@ class CrossAttention(nn.Module):
     Queries come from latents, keys/values from context.
     """
 
-    def __init__(self, dim: int, dim_head: int = 64, heads: int = 8, cross_attn_include_queries: bool = False):
+    def __init__(
+        self, dim: int, dim_head: int = 64, heads: int = 8, cross_attn_include_queries: bool = False
+    ):
         super().__init__()
         self.heads = heads
         self.dim_head = dim_head
@@ -202,7 +204,9 @@ class PerceiverResampler(nn.Module):
             x = self.proj_context(x)
 
         # Expand latents for batch
-        latents = mx.broadcast_to(self.latents[None, :, :], (B, self.latents.shape[0], self.latents.shape[1]))
+        latents = mx.broadcast_to(
+            self.latents[None, :, :], (B, self.latents.shape[0], self.latents.shape[1])
+        )
 
         # Apply transformer layers
         for attn, ff in self.layers:

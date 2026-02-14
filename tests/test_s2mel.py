@@ -39,7 +39,7 @@ def test_s2mel_cfm_shape(s2mel_pipeline):
         prompt=prompt,
         style=style,
         f0=None,
-        n_timesteps=2,   # minimal steps for speed
+        n_timesteps=2,  # minimal steps for speed
         temperature=1.0,
         inference_cfg_rate=0.0,
     )

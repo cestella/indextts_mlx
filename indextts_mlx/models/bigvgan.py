@@ -75,22 +75,18 @@ class AMPBlock1(nn.Module):
         # Optionally wrapped in Activation1d for anti-aliasing
         if activation == "snake":
             base_activations = [
-                Snake(channels, alpha_logscale=snake_logscale)
-                for _ in range(self.num_layers)
+                Snake(channels, alpha_logscale=snake_logscale) for _ in range(self.num_layers)
             ]
         elif activation == "snakebeta":
             base_activations = [
-                SnakeBeta(channels, alpha_logscale=snake_logscale)
-                for _ in range(self.num_layers)
+                SnakeBeta(channels, alpha_logscale=snake_logscale) for _ in range(self.num_layers)
             ]
         else:
             raise ValueError(f"Unknown activation: {activation}")
 
         # Wrap in anti-aliasing if enabled
         if use_anti_aliasing:
-            self.activations = [
-                Activation1d(activation=act) for act in base_activations
-            ]
+            self.activations = [Activation1d(activation=act) for act in base_activations]
         else:
             self.activations = base_activations
 
@@ -162,22 +158,18 @@ class AMPBlock2(nn.Module):
         # Activation functions
         if activation == "snake":
             base_activations = [
-                Snake(channels, alpha_logscale=snake_logscale)
-                for _ in range(self.num_layers)
+                Snake(channels, alpha_logscale=snake_logscale) for _ in range(self.num_layers)
             ]
         elif activation == "snakebeta":
             base_activations = [
-                SnakeBeta(channels, alpha_logscale=snake_logscale)
-                for _ in range(self.num_layers)
+                SnakeBeta(channels, alpha_logscale=snake_logscale) for _ in range(self.num_layers)
             ]
         else:
             raise ValueError(f"Unknown activation: {activation}")
 
         # Wrap in anti-aliasing if enabled
         if use_anti_aliasing:
-            self.activations = [
-                Activation1d(activation=act) for act in base_activations
-            ]
+            self.activations = [Activation1d(activation=act) for act in base_activations]
         else:
             self.activations = base_activations
 
@@ -375,6 +367,7 @@ def create_bigvgan(config_path: str = None, use_anti_aliasing: bool = True) -> B
     """
     if config_path is not None:
         import json
+
         with open(config_path) as f:
             config = json.load(f)
 

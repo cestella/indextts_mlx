@@ -49,16 +49,22 @@ class InterpolateRegulator(nn.Module):
         # Processing layers (simple version without sampling_ratios)
         # In the full implementation, would have multiple Conv1d + GroupNorm + Mish
         # MLX Conv1d signature: Conv1d(in_channels, out_channels, kernel_size, ...)
-        self.conv1 = nn.Conv1d(in_channels=channels, out_channels=channels, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv1d(
+            in_channels=channels, out_channels=channels, kernel_size=3, stride=1, padding=1
+        )
         self.norm1 = nn.GroupNorm(groups, channels)
         self.act1 = Mish()
 
-        self.conv2 = nn.Conv1d(in_channels=channels, out_channels=channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv1d(
+            in_channels=channels, out_channels=channels, kernel_size=3, stride=1, padding=1
+        )
         self.norm2 = nn.GroupNorm(groups, channels)
         self.act2 = Mish()
 
         # Output projection
-        self.out_proj = nn.Conv1d(in_channels=channels, out_channels=out_channels, kernel_size=1, stride=1)
+        self.out_proj = nn.Conv1d(
+            in_channels=channels, out_channels=out_channels, kernel_size=1, stride=1
+        )
 
     def __call__(
         self,
@@ -131,7 +137,7 @@ def create_regulator_from_pytorch_config(pytorch_args) -> InterpolateRegulator:
     """
     config = InterpolateRegulatorConfig(
         channels=pytorch_args.length_regulator.channels,
-        in_channels=getattr(pytorch_args.length_regulator, 'in_channels', None),
+        in_channels=getattr(pytorch_args.length_regulator, "in_channels", None),
         out_channels=pytorch_args.length_regulator.channels,  # Typically same as channels
         groups=1,  # Standard value
     )

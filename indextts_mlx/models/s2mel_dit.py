@@ -82,16 +82,13 @@ class DiT(nn.Module):
 
         # Long skip connection
         if config.long_skip_connection:
-            self.skip_linear = nn.Linear(
-                config.hidden_dim + config.in_channels,
-                config.hidden_dim
-            )
+            self.skip_linear = nn.Linear(config.hidden_dim + config.in_channels, config.hidden_dim)
 
         # Output head
         self.final_mlp = nn.Sequential(
             nn.Linear(config.hidden_dim, config.hidden_dim),
             nn.SiLU(),
-            nn.Linear(config.hidden_dim, config.out_channels)
+            nn.Linear(config.hidden_dim, config.out_channels),
         )
 
     def __call__(
@@ -144,23 +141,17 @@ class DiT(nn.Module):
         padding_mask = sequence_mask(x_lens, max_length=T)  # (batch, T)
         padding_mask_expanded = mx.expand_dims(padding_mask, 1)  # (batch, 1, T)
         attention_mask = create_attention_mask(
-            seq_len=T,
-            is_causal=self.config.is_causal,
-            padding_mask=padding_mask
+            seq_len=T, is_causal=self.config.is_causal, padding_mask=padding_mask
         )
 
         # Apply transformer
         x_res = self.transformer(
-            x_in,
-            conditioning=t_emb,
-            mask=attention_mask
+            x_in, conditioning=t_emb, mask=attention_mask
         )  # (batch, T, hidden_dim)
 
         # Long skip connection
         if self.config.long_skip_connection:
-            x_res = self.skip_linear(
-                mx.concatenate([x_res, x_transposed], axis=-1)
-            )
+            x_res = self.skip_linear(mx.concatenate([x_res, x_transposed], axis=-1))
 
         # Output projection
         x_out = self.final_mlp(x_res)  # (batch, T, out_channels)
@@ -199,9 +190,7 @@ def create_dit_from_pytorch_config(pytorch_args) -> Tuple[DiT, DiTConfig]:
 
 
 def load_dit_weights_from_pytorch(
-    mlx_model: DiT,
-    pytorch_state_dict: dict,
-    verbose: bool = True
+    mlx_model: DiT, pytorch_state_dict: dict, verbose: bool = True
 ) -> None:
     """Load weights from PyTorch state dict into MLX model.
 

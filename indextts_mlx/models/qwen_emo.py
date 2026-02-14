@@ -6,13 +6,13 @@ a text description (English or Chinese) into an 8-float emotion vector:
 
 Matches the PyTorch QwenEmotion class from IndexTTS-2's infer_v2.py.
 """
+
 from __future__ import annotations
 
 import json
 import re
 from pathlib import Path
 from typing import List, Optional
-
 
 # Emotion categories in the required order (matches emo_num split order)
 _DESIRED_ORDER = ["高兴", "愤怒", "悲伤", "恐惧", "反感", "低落", "惊讶", "自然"]
@@ -31,7 +31,12 @@ _CN_TO_EN = {
 # Words that force "sad" detection to be remapped to "melancholic"
 # (the model can't distinguish them; this is the same workaround as PyTorch)
 _MELANCHOLIC_WORDS = {
-    "低落", "melancholy", "melancholic", "depression", "depressed", "gloomy",
+    "低落",
+    "melancholy",
+    "melancholic",
+    "depression",
+    "depressed",
+    "gloomy",
 }
 
 
@@ -55,6 +60,7 @@ class QwenEmotion:
         if self._model is not None:
             return
         from mlx_lm import load
+
         self._model, self._tokenizer = load(self.model_dir)
 
     @staticmethod

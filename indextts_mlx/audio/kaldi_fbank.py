@@ -78,8 +78,8 @@ def compute_kaldi_fbank(
     waveform: np.ndarray,
     num_mel_bins: int = 80,
     sample_frequency: float = 16000.0,
-    frame_length: float = 25.0,   # ms
-    frame_shift: float = 10.0,    # ms
+    frame_length: float = 25.0,  # ms
+    frame_shift: float = 10.0,  # ms
     dither: float = 0.0,
     preemphasis_coefficient: float = 0.97,
     remove_dc_offset: bool = True,
@@ -173,11 +173,11 @@ def compute_kaldi_fbank(
     # 4. Zero-pad to FFT size and compute power spectrum
     if fft_size > frame_length_samples:
         pad_width = fft_size - frame_length_samples
-        frames = np.pad(frames, ((0, 0), (0, pad_width)), mode='constant')
+        frames = np.pad(frames, ((0, 0), (0, pad_width)), mode="constant")
 
     # |FFT|^2 — use float64 for FFT accuracy then cast back
     fft_result = np.fft.rfft(frames.astype(np.float64), n=fft_size, axis=1)
-    power_spectrum = (fft_result.real ** 2 + fft_result.imag ** 2).astype(np.float32)
+    power_spectrum = (fft_result.real**2 + fft_result.imag**2).astype(np.float32)
     # (num_frames, fft_size//2+1)
 
     # 5. Apply mel filterbank
@@ -192,10 +192,7 @@ def compute_kaldi_fbank(
 
 
 def compute_kaldi_fbank_mlx(
-    waveform: mx.array,
-    num_mel_bins: int = 80,
-    sample_frequency: float = 16000.0,
-    **kwargs
+    waveform: mx.array, num_mel_bins: int = 80, sample_frequency: float = 16000.0, **kwargs
 ) -> mx.array:
     """MLX wrapper for Kaldi FBANK computation.
 
@@ -212,8 +209,7 @@ def compute_kaldi_fbank_mlx(
 
     if waveform_np.ndim == 1:
         fbank = compute_kaldi_fbank(
-            waveform_np, num_mel_bins=num_mel_bins,
-            sample_frequency=sample_frequency, **kwargs
+            waveform_np, num_mel_bins=num_mel_bins, sample_frequency=sample_frequency, **kwargs
         )
         return mx.array(fbank)
 
@@ -221,15 +217,17 @@ def compute_kaldi_fbank_mlx(
         batch_size = waveform_np.shape[0]
         fbank_list = [
             compute_kaldi_fbank(
-                waveform_np[i], num_mel_bins=num_mel_bins,
-                sample_frequency=sample_frequency, **kwargs
+                waveform_np[i],
+                num_mel_bins=num_mel_bins,
+                sample_frequency=sample_frequency,
+                **kwargs,
             )
             for i in range(batch_size)
         ]
         max_len = max(f.shape[0] for f in fbank_list)
         batch_fbank = np.zeros((batch_size, max_len, num_mel_bins), dtype=np.float32)
         for i, fbank in enumerate(fbank_list):
-            batch_fbank[i, :fbank.shape[0], :] = fbank
+            batch_fbank[i, : fbank.shape[0], :] = fbank
         return mx.array(batch_fbank)
 
     else:

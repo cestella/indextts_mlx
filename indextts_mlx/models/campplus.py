@@ -58,21 +58,18 @@ class BasicResBlock(nn.Module):
         # MLX expects (H_stride, W_stride), so stride in H (freq), 1 in W (time)
         stride_2d = (stride, 1)
 
-        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3,
-                               stride=stride_2d, padding=1)
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride_2d, padding=1)
         self.bn1 = nn.BatchNorm(planes)
 
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3,
-                               stride=1, padding=1)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1)
         self.bn2 = nn.BatchNorm(planes)
 
         # Shortcut connection
         self.shortcut = None
         if stride != 1 or in_planes != self.expansion * planes:
             self.shortcut = [
-                nn.Conv2d(in_planes, self.expansion * planes,
-                         kernel_size=1, stride=stride_2d),
-                nn.BatchNorm(self.expansion * planes)
+                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride_2d),
+                nn.BatchNorm(self.expansion * planes),
             ]
 
     def __call__(self, x: mx.array) -> mx.array:
@@ -94,8 +91,13 @@ class BasicResBlock(nn.Module):
 class FCM(nn.Module):
     """Front-end Convolutional Module with ResNet blocks."""
 
-    def __init__(self, block=BasicResBlock, num_blocks: List[int] = [2, 2],
-                 m_channels: int = 32, feat_dim: int = 80):
+    def __init__(
+        self,
+        block=BasicResBlock,
+        num_blocks: List[int] = [2, 2],
+        m_channels: int = 32,
+        feat_dim: int = 80,
+    ):
         super().__init__()
 
         self.in_planes = m_channels
@@ -107,8 +109,7 @@ class FCM(nn.Module):
         self.layer2 = self._make_layer(block, m_channels, num_blocks[1], stride=2)
 
         # Final conv with stride (2, 1) - downsamples frequency, not time
-        self.conv2 = nn.Conv2d(m_channels, m_channels, kernel_size=3,
-                               stride=(2, 1), padding=1)
+        self.conv2 = nn.Conv2d(m_channels, m_channels, kernel_size=3, stride=(2, 1), padding=1)
         self.bn2 = nn.BatchNorm(m_channels)
 
         self.out_channels = m_channels * (feat_dim // 8)
@@ -144,37 +145,50 @@ class FCM(nn.Module):
         shape = out.shape  # (B, H, W, C) = (B, 10, 300, 32)
         # Transpose to (B, W, C, H) then reshape to (B, W, C*H) for C-major order
         out = mx.transpose(out, (0, 2, 3, 1))  # (B, H, W, C) -> (B, W, C, H)
-        out = mx.reshape(out, (shape[0], shape[2], shape[3] * shape[1]))  # (B, W, C*H) = (B, 300, 320)
+        out = mx.reshape(
+            out, (shape[0], shape[2], shape[3] * shape[1])
+        )  # (B, W, C*H) = (B, 300, 320)
         return out
 
 
 class TDNNLayer(nn.Module):
     """Time-Delay Neural Network layer (1D convolution)."""
 
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int,
-                 stride: int = 1, padding: int = 0, dilation: int = 1,
-                 bias: bool = False, config_str: str = 'batchnorm-relu'):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        stride: int = 1,
+        padding: int = 0,
+        dilation: int = 1,
+        bias: bool = False,
+        config_str: str = "batchnorm-relu",
+    ):
         super().__init__()
 
         # Auto padding for "same" convolution
         if padding < 0:
-            assert kernel_size % 2 == 1, f'Expect odd kernel size for auto padding, got {kernel_size}'
+            assert (
+                kernel_size % 2 == 1
+            ), f"Expect odd kernel size for auto padding, got {kernel_size}"
             padding = (kernel_size - 1) // 2 * dilation
 
-        self.linear = nn.Conv1d(in_channels, out_channels, kernel_size,
-                                stride=stride, padding=padding, bias=bias)
+        self.linear = nn.Conv1d(
+            in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias
+        )
 
         # Parse config string for normalization and activation
         self.nonlinear = self._make_nonlinear(config_str, out_channels)
 
     def _make_nonlinear(self, config_str: str, channels: int):
         layers = []
-        for name in config_str.split('-'):
-            if name == 'relu':
+        for name in config_str.split("-"):
+            if name == "relu":
                 layers.append(nn.ReLU())
-            elif name == 'batchnorm':
+            elif name == "batchnorm":
                 layers.append(nn.BatchNorm(channels))
-            elif name == 'batchnorm_':
+            elif name == "batchnorm_":
                 layers.append(nn.BatchNorm(channels, affine=False))
             # Note: prelu not commonly used, skip for now
         return layers
@@ -189,15 +203,29 @@ class TDNNLayer(nn.Module):
 class CAMLayer(nn.Module):
     """Context-Aware Modulation layer with attention."""
 
-    def __init__(self, bn_channels: int, out_channels: int,
-                 kernel_size: int, stride: int, padding: int,
-                 dilation: int, bias: bool, reduction: int = 2):
+    def __init__(
+        self,
+        bn_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        stride: int,
+        padding: int,
+        dilation: int,
+        bias: bool,
+        reduction: int = 2,
+    ):
         super().__init__()
 
         # Local convolution
-        self.linear_local = nn.Conv1d(bn_channels, out_channels, kernel_size,
-                                      stride=stride, padding=padding,
-                                      dilation=dilation, bias=bias)
+        self.linear_local = nn.Conv1d(
+            bn_channels,
+            out_channels,
+            kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            bias=bias,
+        )
 
         # Attention mechanism
         self.linear1 = nn.Conv1d(bn_channels, bn_channels // reduction, kernel_size=1)
@@ -252,29 +280,43 @@ class CAMLayer(nn.Module):
 class CAMDenseTDNNLayer(nn.Module):
     """Dense TDNN layer with CAM attention."""
 
-    def __init__(self, in_channels: int, out_channels: int, bn_channels: int,
-                 kernel_size: int, stride: int = 1, dilation: int = 1,
-                 bias: bool = False, config_str: str = 'batchnorm-relu'):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        bn_channels: int,
+        kernel_size: int,
+        stride: int = 1,
+        dilation: int = 1,
+        bias: bool = False,
+        config_str: str = "batchnorm-relu",
+    ):
         super().__init__()
 
-        assert kernel_size % 2 == 1, f'Expect odd kernel size, got {kernel_size}'
+        assert kernel_size % 2 == 1, f"Expect odd kernel size, got {kernel_size}"
         padding = (kernel_size - 1) // 2 * dilation
 
         self.nonlinear1 = self._make_nonlinear(config_str, in_channels)
         self.linear1 = nn.Conv1d(in_channels, bn_channels, kernel_size=1, bias=False)
         self.nonlinear2 = self._make_nonlinear(config_str, bn_channels)
-        self.cam_layer = CAMLayer(bn_channels, out_channels, kernel_size,
-                                  stride=stride, padding=padding,
-                                  dilation=dilation, bias=bias)
+        self.cam_layer = CAMLayer(
+            bn_channels,
+            out_channels,
+            kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            bias=bias,
+        )
 
     def _make_nonlinear(self, config_str: str, channels: int):
         layers = []
-        for name in config_str.split('-'):
-            if name == 'relu':
+        for name in config_str.split("-"):
+            if name == "relu":
                 layers.append(nn.ReLU())
-            elif name == 'batchnorm':
+            elif name == "batchnorm":
                 layers.append(nn.BatchNorm(channels))
-            elif name == 'batchnorm_':
+            elif name == "batchnorm_":
                 layers.append(nn.BatchNorm(channels, affine=False))
         return layers
 
@@ -295,10 +337,18 @@ class CAMDenseTDNNLayer(nn.Module):
 class CAMDenseTDNNBlock(nn.Module):
     """Dense TDNN block with multiple layers and dense connections."""
 
-    def __init__(self, num_layers: int, in_channels: int, out_channels: int,
-                 bn_channels: int, kernel_size: int, stride: int = 1,
-                 dilation: int = 1, bias: bool = False,
-                 config_str: str = 'batchnorm-relu'):
+    def __init__(
+        self,
+        num_layers: int,
+        in_channels: int,
+        out_channels: int,
+        bn_channels: int,
+        kernel_size: int,
+        stride: int = 1,
+        dilation: int = 1,
+        bias: bool = False,
+        config_str: str = "batchnorm-relu",
+    ):
         super().__init__()
 
         self.layers = []
@@ -311,7 +361,7 @@ class CAMDenseTDNNBlock(nn.Module):
                 stride=stride,
                 dilation=dilation,
                 bias=bias,
-                config_str=config_str
+                config_str=config_str,
             )
             self.layers.append(layer)
 
@@ -327,8 +377,13 @@ class CAMDenseTDNNBlock(nn.Module):
 class TransitLayer(nn.Module):
     """Transition layer to reduce channels."""
 
-    def __init__(self, in_channels: int, out_channels: int,
-                 bias: bool = True, config_str: str = 'batchnorm-relu'):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        bias: bool = True,
+        config_str: str = "batchnorm-relu",
+    ):
         super().__init__()
 
         self.nonlinear = self._make_nonlinear(config_str, in_channels)
@@ -336,10 +391,10 @@ class TransitLayer(nn.Module):
 
     def _make_nonlinear(self, config_str: str, channels: int):
         layers = []
-        for name in config_str.split('-'):
-            if name == 'relu':
+        for name in config_str.split("-"):
+            if name == "relu":
                 layers.append(nn.ReLU())
-            elif name == 'batchnorm':
+            elif name == "batchnorm":
                 layers.append(nn.BatchNorm(channels))
         return layers
 
@@ -353,8 +408,13 @@ class TransitLayer(nn.Module):
 class DenseLayer(nn.Module):
     """Final dense layer for embedding."""
 
-    def __init__(self, in_channels: int, out_channels: int,
-                 bias: bool = False, config_str: str = 'batchnorm_'):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        bias: bool = False,
+        config_str: str = "batchnorm_",
+    ):
         super().__init__()
 
         self.linear = nn.Conv1d(in_channels, out_channels, kernel_size=1, bias=bias)
@@ -362,10 +422,10 @@ class DenseLayer(nn.Module):
 
     def _make_nonlinear(self, config_str: str, channels: int):
         layers = []
-        for name in config_str.split('-'):
-            if name == 'batchnorm':
+        for name in config_str.split("-"):
+            if name == "batchnorm":
                 layers.append(nn.BatchNorm(channels))
-            elif name == 'batchnorm_':
+            elif name == "batchnorm_":
                 layers.append(nn.BatchNorm(channels, affine=False))
         return layers
 
@@ -399,9 +459,15 @@ class CAMPPlus(nn.Module):
         config_str: Configuration for normalization/activation
     """
 
-    def __init__(self, feat_dim: int = 80, embedding_size: int = 192,
-                 growth_rate: int = 32, bn_size: int = 4,
-                 init_channels: int = 128, config_str: str = 'batchnorm-relu'):
+    def __init__(
+        self,
+        feat_dim: int = 80,
+        embedding_size: int = 192,
+        growth_rate: int = 32,
+        bn_size: int = 4,
+        init_channels: int = 128,
+        config_str: str = "batchnorm-relu",
+    ):
         super().__init__()
 
         # Front-end convolutional module
@@ -409,9 +475,15 @@ class CAMPPlus(nn.Module):
         channels = self.head.out_channels
 
         # Initial TDNN layer
-        self.tdnn = TDNNLayer(channels, init_channels, kernel_size=5,
-                              stride=2, dilation=1, padding=-1,
-                              config_str=config_str)
+        self.tdnn = TDNNLayer(
+            channels,
+            init_channels,
+            kernel_size=5,
+            stride=2,
+            dilation=1,
+            padding=-1,
+            config_str=config_str,
+        )
         channels = init_channels
 
         # Dense blocks
@@ -429,29 +501,27 @@ class CAMPPlus(nn.Module):
                 bn_channels=bn_size * growth_rate,
                 kernel_size=kernel_size,
                 dilation=dilation,
-                config_str=config_str
+                config_str=config_str,
             )
             self.blocks.append(block)
             channels = channels + num_layers * growth_rate
 
             # Transition layer
-            transit = TransitLayer(channels, channels // 2, bias=False,
-                                  config_str=config_str)
+            transit = TransitLayer(channels, channels // 2, bias=False, config_str=config_str)
             self.transits.append(transit)
             channels //= 2
 
         # Final layers
         self.out_nonlinear = self._make_nonlinear(config_str, channels)
         self.stats = StatsPool()
-        self.dense = DenseLayer(channels * 2, embedding_size,
-                               config_str='batchnorm_')
+        self.dense = DenseLayer(channels * 2, embedding_size, config_str="batchnorm_")
 
     def _make_nonlinear(self, config_str: str, channels: int):
         layers = []
-        for name in config_str.split('-'):
-            if name == 'relu':
+        for name in config_str.split("-"):
+            if name == "relu":
                 layers.append(nn.ReLU())
-            elif name == 'batchnorm':
+            elif name == "batchnorm":
                 layers.append(nn.BatchNorm(channels))
         return layers
 

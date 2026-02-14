@@ -42,24 +42,14 @@ class TransformerBlock(nn.Module):
 
         # AdaLN for attention
         self.norm1 = nn.LayerNorm(hidden_size, affine=False, eps=1e-6)
-        self.attn_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_size, 2 * hidden_size)
-        )
+        self.attn_modulation = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size))
 
         # Multi-head self-attention
-        self.attn = nn.MultiHeadAttention(
-            hidden_size,
-            num_heads,
-            bias=True
-        )
+        self.attn = nn.MultiHeadAttention(hidden_size, num_heads, bias=True)
 
         # AdaLN for feedforward
         self.norm2 = nn.LayerNorm(hidden_size, affine=False, eps=1e-6)
-        self.mlp_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_size, 2 * hidden_size)
-        )
+        self.mlp_modulation = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size))
 
         # Feedforward MLP
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
@@ -69,14 +59,11 @@ class TransformerBlock(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(hidden_size, mlp_hidden_dim),
             nn.SiLU(),
-            nn.Linear(mlp_hidden_dim, hidden_size)
+            nn.Linear(mlp_hidden_dim, hidden_size),
         )
 
     def __call__(
-        self,
-        x: mx.array,
-        conditioning: mx.array,
-        mask: Optional[mx.array] = None
+        self, x: mx.array, conditioning: mx.array, mask: Optional[mx.array] = None
     ) -> mx.array:
         """Apply transformer block.
 
@@ -147,16 +134,10 @@ class Transformer(nn.Module):
         self.n_heads = n_heads
 
         # Transformer blocks
-        self.blocks = [
-            TransformerBlock(dim, n_heads, mlp_ratio, dropout)
-            for _ in range(n_layers)
-        ]
+        self.blocks = [TransformerBlock(dim, n_heads, mlp_ratio, dropout) for _ in range(n_layers)]
 
     def __call__(
-        self,
-        x: mx.array,
-        conditioning: mx.array,
-        mask: Optional[mx.array] = None
+        self, x: mx.array, conditioning: mx.array, mask: Optional[mx.array] = None
     ) -> mx.array:
         """Apply transformer.
 
@@ -179,7 +160,7 @@ def create_attention_mask(
     seq_len: int,
     is_causal: bool = False,
     padding_mask: Optional[mx.array] = None,
-    num_heads: Optional[int] = None
+    num_heads: Optional[int] = None,
 ) -> Optional[mx.array]:
     """Create attention mask.
 
@@ -213,10 +194,7 @@ def create_attention_mask(
         padding_mask_expanded = mx.expand_dims(padding_mask, 1)  # (batch, 1, seq_len)
         padding_mask_tiled = mx.expand_dims(padding_mask, 2)  # (batch, seq_len, 1)
 
-        padding_attention_mask = mx.logical_and(
-            padding_mask_tiled,
-            padding_mask_expanded
-        )
+        padding_attention_mask = mx.logical_and(padding_mask_tiled, padding_mask_expanded)
 
         if mask is not None:
             # Combine causal and padding masks

@@ -9,7 +9,9 @@ import mlx.core as mx
 from indextts_mlx.audio.seamless_fbank import compute_seamless_fbank
 
 
-def test_semantic_codec_quantize_shape(semantic_codec_model, w2vbert_model, reference_audio_np, weights_dir):
+def test_semantic_codec_quantize_shape(
+    semantic_codec_model, w2vbert_model, reference_audio_np, weights_dir
+):
     audio_16k, _ = reference_audio_np
     feats_np = compute_seamless_fbank(audio_16k)
     mlx_feats = mx.array(feats_np[None])
@@ -18,8 +20,8 @@ def test_semantic_codec_quantize_shape(semantic_codec_model, w2vbert_model, refe
     out = w2vbert_model(input_features=mlx_feats, attention_mask=mask, output_hidden_states=True)
 
     stats = np.load(str(weights_dir / "semantic_stats.npz"))
-    mean = mx.array(stats['mean'])
-    std = mx.array(stats['std'])
+    mean = mx.array(stats["mean"])
+    std = mx.array(stats["std"])
     semantic_features = (out.hidden_states[17] - mean) / std
 
     codes, _ = semantic_codec_model.quantize(semantic_features)
@@ -30,7 +32,9 @@ def test_semantic_codec_quantize_shape(semantic_codec_model, w2vbert_model, refe
     assert arr.shape[0] == 1
 
 
-def test_semantic_codec_vq2emb(semantic_codec_model, w2vbert_model, reference_audio_np, weights_dir):
+def test_semantic_codec_vq2emb(
+    semantic_codec_model, w2vbert_model, reference_audio_np, weights_dir
+):
     audio_16k, _ = reference_audio_np
     feats_np = compute_seamless_fbank(audio_16k)
     mlx_feats = mx.array(feats_np[None])
@@ -39,8 +43,8 @@ def test_semantic_codec_vq2emb(semantic_codec_model, w2vbert_model, reference_au
     out = w2vbert_model(input_features=mlx_feats, attention_mask=mask, output_hidden_states=True)
 
     stats = np.load(str(weights_dir / "semantic_stats.npz"))
-    mean = mx.array(stats['mean'])
-    std = mx.array(stats['std'])
+    mean = mx.array(stats["mean"])
+    std = mx.array(stats["std"])
     semantic_features = (out.hidden_states[17] - mean) / std
 
     codes, _ = semantic_codec_model.quantize(semantic_features)

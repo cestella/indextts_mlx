@@ -1,4 +1,5 @@
 """IndexTTS-2 MLX inference pipeline."""
+
 from __future__ import annotations
 
 import warnings
@@ -41,7 +42,7 @@ def _sample_top_k(logits: mx.array, temperature: float = 0.8, top_k: int = 200) 
         # Sort descending, keep top_k
         sorted_indices = mx.argsort(-logits)  # descending
         cutoff = float(logits[sorted_indices[top_k - 1]].item())
-        logits = mx.where(logits >= cutoff, logits, mx.full(logits.shape, float('-inf')))
+        logits = mx.where(logits >= cutoff, logits, mx.full(logits.shape, float("-inf")))
     probs = mx.softmax(logits, axis=-1)
     # Multinomial sampling via inverse CDF
     probs_np = np.array(probs)
@@ -104,8 +105,8 @@ class IndexTTS2:
         self.w2vbert = create_w2vbert_model()
         self.w2vbert = load_w2vbert_model(self.w2vbert, str(config.w2vbert))
         stats = np.load(str(config.semantic_stats))
-        self.semantic_mean = mx.array(stats['mean'])
-        self.semantic_std = mx.array(stats['std'])
+        self.semantic_mean = mx.array(stats["mean"])
+        self.semantic_std = mx.array(stats["std"])
 
         # Load CAMPPlus speaker encoder
         self.campplus = CAMPPlus(feat_dim=80, embedding_size=192)
@@ -118,7 +119,9 @@ class IndexTTS2:
 
         # Load semantic codec
         self.semantic_codec = RepCodec()
-        self.semantic_codec = load_semantic_codec_model(self.semantic_codec, str(config.semantic_codec))
+        self.semantic_codec = load_semantic_codec_model(
+            self.semantic_codec, str(config.semantic_codec)
+        )
 
         # Load S2Mel pipeline
         self.s2mel = create_mlx_s2mel_pipeline(checkpoint_path=str(config.s2mel))
@@ -133,16 +136,16 @@ class IndexTTS2:
         self._qwen_emo_path = config.qwen_emo
 
         # Load emotion/speaker matrices (optional — enables emo_vector support)
-        self._emo_matrix = None   # (8 groups of varying sizes, each row 1280-dim)
-        self._spk_matrix = None   # (8 groups of varying sizes, each row 192-dim)
+        self._emo_matrix = None  # (8 groups of varying sizes, each row 1280-dim)
+        self._spk_matrix = None  # (8 groups of varying sizes, each row 192-dim)
         self._emo_num = [3, 17, 2, 8, 4, 5, 10, 24]  # per IndexTTS-2 config.yaml
         if config.emotion_matrix.exists() and config.speaker_matrix.exists():
-            _em = np.load(str(config.emotion_matrix))['matrix']  # (73, 1280)
-            _sm = np.load(str(config.speaker_matrix))['matrix']  # (73, 192)
+            _em = np.load(str(config.emotion_matrix))["matrix"]  # (73, 1280)
+            _sm = np.load(str(config.speaker_matrix))["matrix"]  # (73, 192)
             # Split into 8 per-category groups
             _offsets = [0] + list(np.cumsum(self._emo_num))
-            self._emo_matrix = [_em[_offsets[i]:_offsets[i+1]] for i in range(8)]
-            self._spk_matrix = [_sm[_offsets[i]:_offsets[i+1]] for i in range(8)]
+            self._emo_matrix = [_em[_offsets[i] : _offsets[i + 1]] for i in range(8)]
+            self._spk_matrix = [_sm[_offsets[i] : _offsets[i + 1]] for i in range(8)]
 
     def _load_audio(self, reference_audio, sample_rate=None):
         """Load and resample reference audio to 16kHz and 22kHz."""
@@ -154,10 +157,16 @@ class IndexTTS2:
             audio = np.asarray(reference_audio, dtype=np.float32)
             sr = sample_rate
             if sr is None:
-                raise ValueError("sample_rate must be provided when reference_audio is a numpy array")
+                raise ValueError(
+                    "sample_rate must be provided when reference_audio is a numpy array"
+                )
 
-        audio_16k = librosa.resample(audio, orig_sr=sr, target_sr=16000).astype(np.float32)[:15*16000]
-        audio_22k = librosa.resample(audio, orig_sr=sr, target_sr=22050).astype(np.float32)[:15*22050]
+        audio_16k = librosa.resample(audio, orig_sr=sr, target_sr=16000).astype(np.float32)[
+            : 15 * 16000
+        ]
+        audio_22k = librosa.resample(audio, orig_sr=sr, target_sr=22050).astype(np.float32)[
+            : 15 * 22050
+        ]
         return audio_16k, audio_22k
 
     def _get_qwen_emo(self):
@@ -169,6 +178,7 @@ class IndexTTS2:
                     "Set INDEXTTS_MLX_QWEN_EMO or pass qwen_emo= to WeightsConfig."
                 )
             from .models.qwen_emo import QwenEmotion
+
             self._qwen_emo = QwenEmotion(self._qwen_emo_path)
         return self._qwen_emo
 
@@ -231,11 +241,11 @@ class IndexTTS2:
         # ── Legacy sample_rate for numpy input ───────────────────────────────
         sample_rate: Optional[int] = None,
         # ── Emotion controls ─────────────────────────────────────────────────
-        emotion: float = 1.0,          # internal emotion scale on emo_vec
-        emo_alpha: float = 0.0,        # blend strength when emo source is provided
-        emo_vector: Optional[List[float]] = None,   # 8-float vector
+        emotion: float = 1.0,  # internal emotion scale on emo_vec
+        emo_alpha: float = 0.0,  # blend strength when emo source is provided
+        emo_vector: Optional[List[float]] = None,  # 8-float vector
         emo_text: Optional[str] = None,
-        use_emo_text: Optional[bool] = None,        # tri-state: None = auto
+        use_emo_text: Optional[bool] = None,  # tri-state: None = auto
         emo_audio_prompt: Optional[Union[str, Path]] = None,
         # ── Determinism ──────────────────────────────────────────────────────
         seed: Optional[int] = None,
@@ -286,8 +296,7 @@ class IndexTTS2:
         spk_path = _resolve_speaker(voices_dir, voice, spk_audio_prompt)
         if spk_path is None:
             raise ValueError(
-                "No speaker source provided. Supply spk_audio_prompt, "
-                "or voice + voices_dir."
+                "No speaker source provided. Supply spk_audio_prompt, " "or voice + voices_dir."
             )
 
         # ── Emotion precedence + auto use_emo_text ────────────────────────────
@@ -305,7 +314,9 @@ class IndexTTS2:
             emo_vector = parse_emo_vector(emo_vector)
 
         # If any emo source set and emo_alpha still at default 0.0, note it's user's choice
-        _has_emo_source = (emo_vector is not None or emo_text is not None or emo_audio_prompt is not None)
+        _has_emo_source = (
+            emo_vector is not None or emo_text is not None or emo_audio_prompt is not None
+        )
         # emo_alpha stays at whatever the caller set (including 0.0)
 
         # ── Determinism ──────────────────────────────────────────────────────
@@ -374,7 +385,7 @@ class IndexTTS2:
                 # emo_audio_prompt path: merge speaker base vec and emo audio vec with alpha
                 emo_audio_16k, _ = self._load_audio(emo_audio_prompt)
                 emo_sem = self._compute_w2vbert_features(emo_audio_16k)  # (1, T, 1024)
-                emo_emovec = self.gpt.get_emo_conditioning(emo_sem)       # (1, 1280)
+                emo_emovec = self.gpt.get_emo_conditioning(emo_sem)  # (1, 1280)
                 # merge: base + alpha * (emo - base)
                 emo_vec_override = audio_emovec + emo_alpha * (emo_emovec - audio_emovec)
             mx.eval(emo_vec_override)
@@ -400,7 +411,9 @@ class IndexTTS2:
                 cur_input = self.gpt.mel_embedding(last_tok)
                 pos_idx = len(generated[0])
                 if pos_idx < self.gpt.mel_pos_embedding.emb.weight.shape[0]:
-                    cur_input = cur_input + self.gpt.mel_pos_embedding.emb(mx.array([pos_idx]))[None]
+                    cur_input = (
+                        cur_input + self.gpt.mel_pos_embedding.emb(mx.array([pos_idx]))[None]
+                    )
                 cur_mask = None
             hidden, cache = self.gpt.gpt(cur_input, cur_mask, cache)
             logits = self.gpt.mel_head(self.gpt.final_norm(hidden[:, -1, :]))
@@ -429,10 +442,16 @@ class IndexTTS2:
         cat_condition = mx.concatenate([prompt_condition, cond], axis=1)
         cat_len = mx.array([cat_condition.shape[1]], dtype=mx.int32)
         mel = self.s2mel.cfm.inference(
-            mu=cat_condition, x_lens=cat_len, prompt=ref_mel_80,
-            style=speaker_style, f0=None, n_timesteps=cfm_steps,
-            temperature=temperature, inference_cfg_rate=cfg_rate)
-        mel = mel[:, :, ref_mel_80.shape[2]:]
+            mu=cat_condition,
+            x_lens=cat_len,
+            prompt=ref_mel_80,
+            style=speaker_style,
+            f0=None,
+            n_timesteps=cfm_steps,
+            temperature=temperature,
+            inference_cfg_rate=cfg_rate,
+        )
+        mel = mel[:, :, ref_mel_80.shape[2] :]
         mx.eval(mel)
 
         # 7. BigVGAN vocoder
@@ -451,5 +470,5 @@ def synthesize(
 
     For repeated synthesis, use IndexTTS2 class directly to avoid reloading weights.
     """
-    tts = IndexTTS2(config=kwargs.pop('config', None))
+    tts = IndexTTS2(config=kwargs.pop("config", None))
     return tts.synthesize(text, reference_audio=reference_audio, **kwargs)

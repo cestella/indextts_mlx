@@ -92,10 +92,7 @@ class InterpolateRegulator(nn.Module):
         self.model.append(nn.Conv1d(channels, channels, kernel_size=1))
 
     def __call__(
-        self,
-        x: mx.array,
-        ylens: mx.array,
-        f0: Optional[mx.array] = None
+        self, x: mx.array, ylens: mx.array, f0: Optional[mx.array] = None
     ) -> Tuple[mx.array, mx.array]:
         """Apply regulator.
 
@@ -130,9 +127,7 @@ class InterpolateRegulator(nn.Module):
             ratio = T_in / target_len
             # Compute input indices (nearest neighbor)
             in_indices = mx.clip(
-                mx.floor(out_positions[:target_len] * ratio).astype(mx.int32),
-                0,
-                T_in - 1
+                mx.floor(out_positions[:target_len] * ratio).astype(mx.int32), 0, T_in - 1
             )
             # Gather features
             x_sample = mx.take(x[i], in_indices, axis=0)  # (target_len, channels)
@@ -166,9 +161,9 @@ def create_regulator_from_config(config_dict: dict) -> InterpolateRegulator:
     reg_config = config_dict
 
     regulator = InterpolateRegulator(
-        in_channels=reg_config['in_channels'],
-        channels=reg_config['channels'],
-        sampling_ratios=reg_config['sampling_ratios'],
+        in_channels=reg_config["in_channels"],
+        channels=reg_config["channels"],
+        sampling_ratios=reg_config["sampling_ratios"],
         groups=1,  # Default to 1 group
     )
 

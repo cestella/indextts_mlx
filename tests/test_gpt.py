@@ -18,8 +18,8 @@ def semantic_features_fixture(w2vbert_model, reference_audio_np, weights_dir):
     mask = mx.ones((1, T), dtype=mx.int32)
     out = w2vbert_model(input_features=mlx_feats, attention_mask=mask, output_hidden_states=True)
     stats = np.load(str(weights_dir / "semantic_stats.npz"))
-    mean = mx.array(stats['mean'])
-    std = mx.array(stats['std'])
+    mean = mx.array(stats["mean"])
+    std = mx.array(stats["std"])
     feats = (out.hidden_states[17] - mean) / std
     mx.eval(feats)
     return feats
@@ -35,9 +35,15 @@ def test_gpt_conditioning_shape(gpt_model, semantic_features_fixture):
 
 
 def test_gpt_conditioning_emotion_scale(gpt_model, semantic_features_fixture):
-    cond_neutral = np.array(gpt_model.get_full_conditioning_34(semantic_features_fixture, emotion_scale=0.0))
-    cond_default = np.array(gpt_model.get_full_conditioning_34(semantic_features_fixture, emotion_scale=1.0))
-    cond_expressive = np.array(gpt_model.get_full_conditioning_34(semantic_features_fixture, emotion_scale=2.0))
+    cond_neutral = np.array(
+        gpt_model.get_full_conditioning_34(semantic_features_fixture, emotion_scale=0.0)
+    )
+    cond_default = np.array(
+        gpt_model.get_full_conditioning_34(semantic_features_fixture, emotion_scale=1.0)
+    )
+    cond_expressive = np.array(
+        gpt_model.get_full_conditioning_34(semantic_features_fixture, emotion_scale=2.0)
+    )
     # Neutral and default should differ
     assert not np.allclose(cond_neutral, cond_default, atol=1e-4)
     # Default and expressive should differ
@@ -46,6 +52,7 @@ def test_gpt_conditioning_emotion_scale(gpt_model, semantic_features_fixture):
 
 def test_gpt_prepare_inputs_shape(gpt_model, semantic_features_fixture, bpe_model_path):
     from sentencepiece import SentencePieceProcessor
+
     sp = SentencePieceProcessor(model_file=str(bpe_model_path))
     text_tokens = mx.array([sp.encode("HELLO WORLD")])
     cond = gpt_model.get_full_conditioning_34(semantic_features_fixture)

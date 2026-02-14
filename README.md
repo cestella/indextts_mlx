@@ -5,7 +5,7 @@ IndexTTS-2 text-to-speech inference on Apple Silicon via [MLX](https://github.co
 ## Requirements
 
 - Apple Silicon Mac (M1/M2/M3/M4)
-- Python 3.10+
+- Python 3.11 or 3.12 recommended (required for NeMo/spaCy compatibility; 3.10+ for core synthesis only)
 - IndexTTS-2 model weights converted to `.npz` format
 
 ## Installation
@@ -13,18 +13,65 @@ IndexTTS-2 text-to-speech inference on Apple Silicon via [MLX](https://github.co
 ```bash
 git clone https://github.com/cestella/indextts_mlx
 cd indextts_mlx
-python3 -m venv venv
+python3.11 -m venv venv          # use 3.11 or 3.12 for full feature support
 source venv/bin/activate
 pip install -e .
 ```
 
-For development (includes pytest):
+For development (includes pytest + black):
 
 ```bash
 pip install -e ".[dev]"
 ```
 
 ## Weights
+
+### Automatic download and conversion (recommended)
+
+`indextts-download-weights` downloads all source checkpoints from HuggingFace
+and converts them to the `.npz` format required by the MLX engine in one step.
+
+**Install conversion dependencies first:**
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install huggingface_hub safetensors
+```
+
+**Run the downloader:**
+
+```bash
+indextts-download-weights --out-dir ~/indextts_weights
+```
+
+Or with a separate download cache (useful for re-running without re-downloading):
+
+```bash
+indextts-download-weights --out-dir ~/indextts_weights --cache-dir ~/indextts_cache
+```
+
+Models downloaded and converted:
+
+| Source (HuggingFace) | File(s) | Output |
+|---|---|---|
+| `IndexTeam/IndexTTS-2` | `gpt.pth` | `gpt.npz` |
+| `IndexTeam/IndexTTS-2` | `s2mel.pth` | `s2mel_pytorch.npz` |
+| `IndexTeam/IndexTTS-2` | `wav2vec2bert_stats.pt` | `semantic_stats.npz` |
+| `IndexTeam/IndexTTS-2` | `feat1.pt` / `feat2.pt` | `speaker_matrix.npz` / `emotion_matrix.npz` |
+| `IndexTeam/IndexTTS-2` | `bpe.model` | `bpe.model` |
+| `funasr/campplus` | `campplus_cn_common.bin` | `campplus.npz` |
+| `facebook/w2v-bert-2.0` | `model.safetensors` | `w2vbert.npz` |
+| `amphion/MaskGCT` | `semantic_codec/model.safetensors` | `semantic_codec.npz` |
+| `nvidia/bigvgan_v2_22khz_80band_256x` | `bigvgan_generator.pt` | `bigvgan.npz` |
+
+After the download completes, point `indextts-tts` at the output directory:
+
+```bash
+export INDEXTTS_MLX_WEIGHTS_DIR=~/indextts_weights
+# or pass --weights-dir ~/indextts_weights on each invocation
+```
+
+### Manual weights
 
 All model weights must be in `.npz` format in a single directory. The default location is:
 
@@ -55,6 +102,70 @@ You also need a SentencePiece BPE tokenizer model (default: `~/code/tts/index-tt
 
 For `--emo-text`, the fine-tuned Qwen3-0.6B emotion classifier must be present (default: `~/code/tts/index-tts/checkpoints/qwen0.6bemo4-merge`).
 
+### Long-text synthesis / sentence segmentation (optional)
+
+`synthesize_long()` chunks arbitrary-length text into sentences using spaCy. Install spaCy, the language model, and optionally pySBD for better abbreviation handling:
+
+```bash
+pip install -e ".[long]"                          # installs spacy + pysbd
+python -m spacy download en_core_web_sm           # English
+python -m spacy download fr_core_news_sm          # French
+python -m spacy download es_core_news_sm          # Spanish
+python -m spacy download it_core_news_sm          # Italian
+python -m spacy download de_core_news_sm          # German
+python -m spacy download pt_core_news_sm          # Portuguese
+```
+
+### Text normalization (optional)
+
+`synthesize_long()` can normalize text before synthesis (numbers → words, currency, dates, etc.) using [NeMo Text Processing](https://github.com/NVIDIA/NeMo-text-processing). Normalization is entirely optional — if `nemo_text_processing` is not installed, `synthesize_long()` silently skips it.
+
+**Linux:** prebuilt wheels are available:
+
+```bash
+pip install pynini nemo_text_processing
+```
+
+**macOS:** `pynini` must be compiled against OpenFst. Requires Python 3.11 or 3.12 (pynini does not yet support 3.13+).
+
+1. **Install OpenFst via Homebrew:**
+   ```bash
+   brew install openfst
+   ```
+
+2. **Verify the prefix:**
+   ```bash
+   brew --prefix openfst
+   # Expected: /opt/homebrew/opt/openfst
+   ```
+
+3. **Build pynini with the correct flags:**
+   ```bash
+   export CFLAGS="-I/opt/homebrew/opt/openfst/include"
+   export CXXFLAGS="-I/opt/homebrew/opt/openfst/include"
+   export LDFLAGS="-L/opt/homebrew/opt/openfst/lib"
+
+   pip install --no-cache-dir pynini
+   ```
+
+   > **Note:** `nemo_text_processing` declares a dependency on `pynini==2.1.6.post1`, but that version does not build against OpenFst 1.8+. Install `pynini` without a version pin (gets 2.1.7+) and ignore the version warning — it works fine at runtime.
+
+4. **Install nemo_text_processing:**
+   ```bash
+   pip install --no-deps nemo_text_processing
+   pip install sacremoses cdifflib editdistance inflect joblib pandas regex transformers wget
+   ```
+
+5. **Verify:**
+   ```bash
+   python -c "from nemo_text_processing.text_normalization.normalize import Normalizer; print('ok')"
+   ```
+
+**Troubleshooting:**
+- If OpenFst headers are not found: `ls /opt/homebrew/opt/openfst/include/fst/` — if empty, try `brew reinstall openfst`.
+- On older Intel Macs: replace `/opt/homebrew` with `/usr/local`.
+- All three environment variables (CFLAGS, CXXFLAGS, LDFLAGS) must be set before running pip.
+
 Override defaults with environment variables:
 
 ```bash
@@ -65,9 +176,30 @@ export INDEXTTS_MLX_QWEN_EMO=/path/to/qwen0.6bemo4-merge
 
 ## CLI
 
+All text input is automatically run through the full pipeline:
+**normalize → segment at sentence boundaries → synthesize → stitch**.
+
 ```
-indextts-tts TEXT [OPTIONS]
+indextts-tts --text "..." [OPTIONS]
+indextts-tts --file chapter.txt [OPTIONS]
 ```
+
+**Input (pick one):**
+
+| Flag | Description |
+|------|-------------|
+| `--text TEXT` | Inline text to synthesize |
+| `--file PATH` | UTF-8 text file to synthesize |
+
+**Text pipeline controls:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--normalize / --no-normalize` | on | Run NeMo text normalization (numbers, dates, currency → spoken form) |
+| `--language TEXT` | `english` | Language for normalization and segmentation |
+| `--token-target INT` | `250` | BPE tokens per synthesis chunk (~2–3 sentences); chunks always break on sentence boundaries, never mid-sentence (GPT hard max ~600) |
+| `--silence-ms INT` | `300` | Silence in ms between chunks (used when `--crossfade-ms 0`) |
+| `--crossfade-ms INT` | `10` | Linear crossfade overlap in ms between chunks; replaces silence when non-zero |
 
 **Speaker source (pick one; `--spk-audio-prompt` takes priority):**
 
@@ -98,7 +230,8 @@ indextts-tts TEXT [OPTIONS]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--out PATH` | `output.wav` | Output WAV file |
+| `--out PATH` | `output.wav` | Output file; extension sets format (`.wav`, `.mp3`, `.pcm`) |
+| `--audio-format wav\|mp3\|pcm` | *(from ext)* | Override format detection |
 | `--steps INT` | `10` | CFM diffusion steps (10 = fast, 25 = higher quality) |
 | `--temperature FLOAT` | `1.0` | CFM sampling temperature |
 | `--cfg-rate FLOAT` | `0.7` | Classifier-free guidance rate |
@@ -122,21 +255,27 @@ indextts-tts TEXT [OPTIONS]
 **Examples:**
 
 ```bash
-# Basic synthesis
-indextts-tts "Hello, world." --spk-audio-prompt speaker.wav
+# Basic synthesis (inline text)
+indextts-tts --text "Hello, world." --spk-audio-prompt speaker.wav
 
-# Voices directory
-indextts-tts "Hello." --voices-dir ~/voices --voice Emma --out out.wav
+# Synthesize a text file
+indextts-tts --file chapter01.txt --voices-dir ~/voices --voice Emma --out ch01.wav
+
+# Disable normalization (text already in spoken form)
+indextts-tts --text "forty two" --spk-audio-prompt speaker.wav --no-normalize
+
+# French text file
+indextts-tts --file histoire.txt --language french --spk-audio-prompt speaker.wav
 
 # Emotion via text description (uses Qwen3-0.6B classifier)
-indextts-tts "What a day!" --spk-audio-prompt speaker.wav --emo-text "joyful and excited"
+indextts-tts --text "What a day!" --spk-audio-prompt speaker.wav --emo-text "joyful and excited"
 
 # Emotion via explicit vector (happy=0.8, calm=0.2)
-indextts-tts "What a day!" --spk-audio-prompt speaker.wav \
+indextts-tts --text "What a day!" --spk-audio-prompt speaker.wav \
     --emo-vector "0.8,0,0,0,0,0,0,0.2"
 
 # High-quality deterministic render
-indextts-tts "Chapter one." --spk-audio-prompt speaker.wav \
+indextts-tts --file chapter01.txt --spk-audio-prompt speaker.wav \
     --steps 25 --seed 42 --no-use-random --out chapter01.wav
 
 # JSONL chapter render
@@ -305,7 +444,21 @@ mel spectrogram → [BigVGAN] → waveform @ 22050 Hz
 | Mel bins | 80 |
 | Hop length | 256 samples |
 
-## Tests
+## Development
+
+### Code formatting
+
+The project uses [Black](https://black.readthedocs.io/) (line length 100, target Python 3.11):
+
+```bash
+source venv/bin/activate
+black indextts_mlx/ cli/ tests/       # format in-place
+black --check indextts_mlx/ cli/ tests/  # CI check (no writes)
+```
+
+Black config lives in `pyproject.toml` under `[tool.black]`.
+
+### Tests
 
 ```bash
 source venv/bin/activate

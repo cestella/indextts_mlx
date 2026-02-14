@@ -222,8 +222,8 @@ class FactorizedVectorQuantize(nn.Module):
 
         # Compute Euclidean distance: ||e - c||^2 = ||e||^2 - 2*e·c + ||c||^2
         # When L2 normalized, this is proportional to cosine distance
-        encodings_sq = mx.sum(encodings ** 2, axis=-1, keepdims=True)  # (B*T, 1)
-        codebook_sq = mx.sum(codebook ** 2, axis=-1, keepdims=True).T  # (1, K)
+        encodings_sq = mx.sum(encodings**2, axis=-1, keepdims=True)  # (B*T, 1)
+        codebook_sq = mx.sum(codebook**2, axis=-1, keepdims=True).T  # (1, K)
         dot_product = mx.matmul(encodings, codebook.T)  # (B*T, K)
 
         dist = encodings_sq - 2 * dot_product + codebook_sq  # (B*T, K)

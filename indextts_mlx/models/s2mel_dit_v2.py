@@ -70,10 +70,7 @@ class FinalLayer(nn.Module):
         self.norm_final = nn.LayerNorm(hidden_size, affine=False, eps=1e-6)
         self.linear = nn.Linear(hidden_size, out_channels)
 
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_size, 2 * hidden_size)
-        )
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size))
 
     def __call__(self, x: mx.array, c: mx.array) -> mx.array:
         """Apply final layer.
@@ -118,10 +115,7 @@ class DiTV2(nn.Module):
         # Merge all inputs
         # Input dims: x(80) + prompt_x(80) + cond(512) + style(192) = 864
         merge_input_dim = (
-            config.in_channels
-            + config.in_channels
-            + config.content_dim
-            + config.style_dim
+            config.in_channels + config.in_channels + config.content_dim + config.style_dim
         )
         self.cond_x_merge_linear = nn.Linear(merge_input_dim, config.hidden_dim)
 
@@ -141,10 +135,7 @@ class DiTV2(nn.Module):
 
         # Long skip connection
         if config.long_skip_connection:
-            self.skip_linear = nn.Linear(
-                config.hidden_dim + config.in_channels,
-                config.hidden_dim
-            )
+            self.skip_linear = nn.Linear(config.hidden_dim + config.in_channels, config.hidden_dim)
 
         # Final layer
         if config.final_layer_type == "wavenet":
@@ -167,13 +158,17 @@ class DiTV2(nn.Module):
 
             self.res_projection = nn.Linear(config.hidden_dim, config.wavenet_hidden_dim)
 
-            self.conv2 = nn.Conv1d(in_channels=config.wavenet_hidden_dim, out_channels=config.in_channels, kernel_size=1)
+            self.conv2 = nn.Conv1d(
+                in_channels=config.wavenet_hidden_dim,
+                out_channels=config.in_channels,
+                kernel_size=1,
+            )
         else:
             # Simple MLP final layer
             self.final_mlp = nn.Sequential(
                 nn.Linear(config.hidden_dim, config.hidden_dim),
                 nn.SiLU(),
-                nn.Linear(config.hidden_dim, config.out_channels)
+                nn.Linear(config.hidden_dim, config.out_channels),
             )
 
     def __call__(
@@ -222,15 +217,13 @@ class DiTV2(nn.Module):
         x_in = self.cond_x_merge_linear(x_in)  # (batch, T, hidden_dim)
 
         # Apply transformer
-        #DEBUG# print(f"[DEBUG] Before transformer: x_in.shape={x_in.shape}, t_emb.shape={t_emb.shape}")
+        # DEBUG# print(f"[DEBUG] Before transformer: x_in.shape={x_in.shape}, t_emb.shape={t_emb.shape}")
         x_res = self.transformer(x_in, conditioning=t_emb, mask=None)
-        #DEBUG# print(f"[DEBUG] After transformer: x_res.shape={x_res.shape}")
+        # DEBUG# print(f"[DEBUG] After transformer: x_res.shape={x_res.shape}")
 
         # Long skip connection
         if self.config.long_skip_connection:
-            x_res = self.skip_linear(
-                mx.concatenate([x_res, x_transposed], axis=-1)
-            )
+            x_res = self.skip_linear(mx.concatenate([x_res, x_transposed], axis=-1))
 
         # Final layer
         if self.config.final_layer_type == "wavenet":
@@ -274,28 +267,28 @@ def create_dit_v2_from_config(config_dict: dict) -> tuple[DiTV2, DiTConfigV2]:
     Returns:
         Tuple of (dit_model, dit_config)
     """
-    dit_cfg = config_dict['DiT']
-    wavenet_cfg = config_dict.get('wavenet', {})
+    dit_cfg = config_dict["DiT"]
+    wavenet_cfg = config_dict.get("wavenet", {})
 
     config = DiTConfigV2(
-        hidden_dim=dit_cfg['hidden_dim'],
-        depth=dit_cfg['depth'],
-        num_heads=dit_cfg['num_heads'],
-        in_channels=dit_cfg['in_channels'],
-        out_channels=dit_cfg['in_channels'],
-        content_dim=dit_cfg['content_dim'],
-        style_dim=config_dict['style_encoder']['dim'],
-        long_skip_connection=dit_cfg['long_skip_connection'],
-        uvit_skip_connection=dit_cfg.get('uvit_skip_connection', True),
-        is_causal=dit_cfg['is_causal'],
-        final_layer_type=dit_cfg.get('final_layer_type', 'wavenet'),
-        wavenet_hidden_dim=wavenet_cfg.get('hidden_dim', 512),
-        wavenet_kernel_size=wavenet_cfg.get('kernel_size', 5),
-        wavenet_dilation_rate=wavenet_cfg.get('dilation_rate', 1),
-        wavenet_num_layers=wavenet_cfg.get('num_layers', 8),
-        wavenet_dropout=wavenet_cfg.get('p_dropout', 0.2),
+        hidden_dim=dit_cfg["hidden_dim"],
+        depth=dit_cfg["depth"],
+        num_heads=dit_cfg["num_heads"],
+        in_channels=dit_cfg["in_channels"],
+        out_channels=dit_cfg["in_channels"],
+        content_dim=dit_cfg["content_dim"],
+        style_dim=config_dict["style_encoder"]["dim"],
+        long_skip_connection=dit_cfg["long_skip_connection"],
+        uvit_skip_connection=dit_cfg.get("uvit_skip_connection", True),
+        is_causal=dit_cfg["is_causal"],
+        final_layer_type=dit_cfg.get("final_layer_type", "wavenet"),
+        wavenet_hidden_dim=wavenet_cfg.get("hidden_dim", 512),
+        wavenet_kernel_size=wavenet_cfg.get("kernel_size", 5),
+        wavenet_dilation_rate=wavenet_cfg.get("dilation_rate", 1),
+        wavenet_num_layers=wavenet_cfg.get("num_layers", 8),
+        wavenet_dropout=wavenet_cfg.get("p_dropout", 0.2),
         ffn_hidden_dim=1536,  # ~3x hidden_dim, from checkpoint analysis
-        block_size=dit_cfg.get('block_size', 8192),
+        block_size=dit_cfg.get("block_size", 8192),
     )
 
     model = DiTV2(config)

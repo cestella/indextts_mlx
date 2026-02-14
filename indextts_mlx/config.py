@@ -1,4 +1,5 @@
 """Configuration and weight path management."""
+
 import os
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -23,11 +24,12 @@ def _default_qwen_emo() -> Path:
 @dataclass
 class WeightsConfig:
     """Paths to model weights and resources.
-    
+
     Can be configured via:
     - Constructor arguments
     - Environment variables: INDEXTTS_MLX_WEIGHTS_DIR, INDEXTTS_MLX_BPE_MODEL
     """
+
     weights_dir: Path = field(default_factory=_default_weights_dir)
     bpe_model: Path = field(default_factory=_default_bpe_model)
     qwen_emo: Path = field(default_factory=_default_qwen_emo)
@@ -75,8 +77,15 @@ class WeightsConfig:
 
     def validate(self):
         """Raise FileNotFoundError if any required weight file is missing."""
-        required = [self.gpt, self.w2vbert, self.campplus, self.semantic_codec,
-                    self.semantic_stats, self.bigvgan, self.bpe_model]
+        required = [
+            self.gpt,
+            self.w2vbert,
+            self.campplus,
+            self.semantic_codec,
+            self.semantic_stats,
+            self.bigvgan,
+            self.bpe_model,
+        ]
         for path in required:
             if not path.exists():
                 raise FileNotFoundError(f"Required file not found: {path}")

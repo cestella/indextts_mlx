@@ -30,6 +30,7 @@ def _build_mel_filters_kaldi(
     Returns:
         mel_filters: (num_frequency_bins, num_mel_filters)
     """
+
     def hertz_to_mel(freq):
         return 1127.0 * np.log(1.0 + np.asarray(freq, dtype=np.float64) / 700.0)
 
@@ -44,7 +45,7 @@ def _build_mel_filters_kaldi(
     f_diff = filter_freqs_mel[1:] - filter_freqs_mel[:-1]
     slopes = filter_freqs_mel[np.newaxis, :] - fft_freqs_mel[:, np.newaxis]  # (n_freqs, n_mels+2)
     down_slopes = (-slopes[:, :-2]) / f_diff[:-1]  # (n_freqs, n_mels)
-    up_slopes = slopes[:, 2:] / f_diff[1:]         # (n_freqs, n_mels)
+    up_slopes = slopes[:, 2:] / f_diff[1:]  # (n_freqs, n_mels)
     mel_filters = np.maximum(0.0, np.minimum(down_slopes, up_slopes))  # (n_freqs, n_mels)
 
     return mel_filters.astype(np.float32)
@@ -95,12 +96,12 @@ def compute_seamless_fbank(
     buffer = np.zeros(fft_length, dtype=np.float64)
 
     for i in range(num_frames):
-        buffer[:frame_length] = waveform[i * hop_length:i * hop_length + frame_length]
+        buffer[:frame_length] = waveform[i * hop_length : i * hop_length + frame_length]
         # DC removal
         buffer[:frame_length] -= buffer[:frame_length].mean()
         # Preemphasis (SeamlessM4T formula: first sample scaled by (1-coeff))
-        buffer[1:frame_length] -= preemphasis_coeff * buffer[:frame_length - 1]
-        buffer[0] *= (1.0 - preemphasis_coeff)
+        buffer[1:frame_length] -= preemphasis_coeff * buffer[: frame_length - 1]
+        buffer[0] *= 1.0 - preemphasis_coeff
         # Povey window
         buffer[:frame_length] *= _POVEY_WINDOW
         # Power spectrum

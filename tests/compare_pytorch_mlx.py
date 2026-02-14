@@ -33,6 +33,7 @@ sys.path.insert(0, str(PT_REPO_DIR))
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+
 def compare(name, pt_arr, mlx_arr, verbose=False):
     """Compare two numpy arrays and print a summary row."""
     if pt_arr is None or mlx_arr is None:
@@ -44,11 +45,15 @@ def compare(name, pt_arr, mlx_arr, verbose=False):
         print(f"  {name:40s} SHAPE MISMATCH  pt={pt.shape}  mlx={mlx.shape}")
         return
     diff = np.abs(pt - mlx)
-    cos = float(np.dot(pt.ravel(), mlx.ravel()) /
-                (np.linalg.norm(pt.ravel()) * np.linalg.norm(mlx.ravel()) + 1e-12))
-    print(f"  {name:40s} shape={str(pt.shape):18s}  "
-          f"max|Δ|={diff.max():.5f}  cos={cos:.5f}  "
-          f"pt_μ={pt.mean():.4f}  mlx_μ={mlx.mean():.4f}")
+    cos = float(
+        np.dot(pt.ravel(), mlx.ravel())
+        / (np.linalg.norm(pt.ravel()) * np.linalg.norm(mlx.ravel()) + 1e-12)
+    )
+    print(
+        f"  {name:40s} shape={str(pt.shape):18s}  "
+        f"max|Δ|={diff.max():.5f}  cos={cos:.5f}  "
+        f"pt_μ={pt.mean():.4f}  mlx_μ={mlx.mean():.4f}"
+    )
     if verbose and diff.max() > 0.1:
         idx = np.unravel_index(diff.argmax(), diff.shape)
         print(f"    largest diff at {idx}: pt={pt[idx]:.4f}  mlx={mlx[idx]:.4f}")
@@ -62,18 +67,25 @@ def header(title):
 
 # ── load shared audio ─────────────────────────────────────────────────────────
 
+
 def load_audio(voice_path):
     import soundfile as sf
     import librosa
+
     audio, sr = sf.read(voice_path)
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
-    audio_16k = librosa.resample(audio, orig_sr=sr, target_sr=16000).astype(np.float32)[:15*16000]
-    audio_22k = librosa.resample(audio, orig_sr=sr, target_sr=22050).astype(np.float32)[:15*22050]
+    audio_16k = librosa.resample(audio, orig_sr=sr, target_sr=16000).astype(np.float32)[
+        : 15 * 16000
+    ]
+    audio_22k = librosa.resample(audio, orig_sr=sr, target_sr=22050).astype(np.float32)[
+        : 15 * 22050
+    ]
     return audio_16k, audio_22k
 
 
 # ── PyTorch pipeline ─────────────────────────────────────────────────────────
+
 
 def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
     """Run each stage of the PyTorch pipeline and return intermediate tensors."""
@@ -88,6 +100,7 @@ def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
     # ── Stage 0-2: seamless fbank → W2V-BERT → normalized features ──────────
     header("PyTorch: W2V-BERT")
     from transformers import SeamlessM4TFeatureExtractor
+
     extractor = SeamlessM4TFeatureExtractor.from_pretrained("facebook/w2v-bert-2.0")
     audio_t = torch.from_numpy(audio_16k).unsqueeze(0)
     inputs = extractor(audio_t, sampling_rate=16000, return_tensors="pt")
@@ -98,12 +111,18 @@ def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
     w2vbert = Wav2Vec2BertModel.from_pretrained("facebook/w2v-bert-2.0")
     w2vbert.eval()
     with torch.no_grad():
-        out = w2vbert(input_features=input_features, attention_mask=attention_mask,
-                      output_hidden_states=True)
+        out = w2vbert(
+            input_features=input_features, attention_mask=attention_mask, output_hidden_states=True
+        )
     hidden17 = out.hidden_states[17]  # (1, T, 1024)
     tensors["w2vbert_hidden17"] = hidden17.numpy()
 
-    stats = np.load(str(Path.home() / "code/index-tts-m3-port/prototypes/s2mel_mlx/mlx_weights/semantic_stats.npz"))
+    stats = np.load(
+        str(
+            Path.home()
+            / "code/index-tts-m3-port/prototypes/s2mel_mlx/mlx_weights/semantic_stats.npz"
+        )
+    )
     mean_t = torch.from_numpy(stats["mean"])
     std_t = torch.from_numpy(stats["std"])
     sem_feat = (hidden17 - mean_t) / std_t
@@ -114,13 +133,14 @@ def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
     header("PyTorch: CAMPPlus")
     sys.path.insert(0, str(PT_REPO_DIR / "indextts/s2mel/modules/campplus"))
     from DTDNN import CAMPPlus as PTCAMPPlus
+
     campplus_ckpt = hf_hub_download("funasr/campplus", "campplus_cn_common.bin")
     campplus = PTCAMPPlus(feat_dim=80, embedding_size=192)
     campplus.load_state_dict(torch.load(campplus_ckpt, map_location="cpu"))
     campplus.eval()
     feat = torchaudio.compliance.kaldi.fbank(
-        torch.from_numpy(audio_16k).unsqueeze(0),
-        num_mel_bins=80, dither=0, sample_frequency=16000)
+        torch.from_numpy(audio_16k).unsqueeze(0), num_mel_bins=80, dither=0, sample_frequency=16000
+    )
     feat = feat - feat.mean(dim=0, keepdim=True)
     with torch.no_grad():
         style = campplus(feat.unsqueeze(0))
@@ -132,6 +152,7 @@ def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
     sys.path.insert(0, str(PT_REPO_DIR))
     from indextts.utils.maskgct_utils import build_semantic_codec
     from omegaconf import OmegaConf
+
     cfg = OmegaConf.load(str(PT_REPO_DIR / "checkpoints/config.yaml"))
     semantic_codec = build_semantic_codec(cfg.semantic_codec)
     codec_ckpt = hf_hub_download("amphion/MaskGCT", filename="semantic_codec/model.safetensors")
@@ -145,22 +166,29 @@ def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
     # ── Stage 5: Prompt regulator ─────────────────────────────────────────────
     header("PyTorch: S2Mel (load)")
     from indextts.s2mel.modules.commons import load_checkpoint2, MyModel
+
     s2mel_path = str(PT_REPO_DIR / "checkpoints/s2mel.pth")
     if not os.path.exists(s2mel_path):
-        s2mel_path = str(Path.home() / ".cache/huggingface/hub/models--IndexTeam--IndexTTS-2/snapshots/740dcaff396282ffb241903d150ac011cd4b1ede/s2mel.pth")
+        s2mel_path = str(
+            Path.home()
+            / ".cache/huggingface/hub/models--IndexTeam--IndexTTS-2/snapshots/740dcaff396282ffb241903d150ac011cd4b1ede/s2mel.pth"
+        )
     s2mel = MyModel(cfg.s2mel, use_gpt_latent=True)
-    s2mel, _, _, _ = load_checkpoint2(s2mel, None, s2mel_path, load_only_params=True,
-                                       ignore_modules=[], is_distributed=False)
+    s2mel, _, _, _ = load_checkpoint2(
+        s2mel, None, s2mel_path, load_only_params=True, ignore_modules=[], is_distributed=False
+    )
     s2mel.eval()
-    s2mel.models['cfm'].estimator.setup_caches(max_batch_size=2, max_seq_length=8192)
+    s2mel.models["cfm"].estimator.setup_caches(max_batch_size=2, max_seq_length=8192)
 
     import librosa
+
     ref_mel_np = _compute_mel_pytorch(audio_22k)  # (1, 80, T)
     ref_mel_t = torch.from_numpy(ref_mel_np)
     ref_target_lengths = torch.LongTensor([ref_mel_t.size(2)])
     with torch.no_grad():
-        prompt_condition = s2mel.models['length_regulator'](
-            S_ref, ylens=ref_target_lengths, n_quantizers=3, f0=None)[0]
+        prompt_condition = s2mel.models["length_regulator"](
+            S_ref, ylens=ref_target_lengths, n_quantizers=3, f0=None
+        )[0]
     tensors["prompt_condition"] = prompt_condition.numpy()
     print("  prompt_condition:", prompt_condition.shape)
 
@@ -168,6 +196,7 @@ def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
     header("PyTorch: GPT conditioning")
     from indextts.gpt.model_v2 import UnifiedVoice
     from indextts.utils.checkpoint import load_checkpoint
+
     gpt = UnifiedVoice(**cfg.gpt, use_accel=False)
     gpt_ckpt = str(Path.home() / "code/tts/index-tts/checkpoints/gpt.pth")
     load_checkpoint(gpt, gpt_ckpt)
@@ -178,30 +207,41 @@ def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
     # emo_cond_emb = spk_cond_emb (same audio for emo and spk)
     with torch.no_grad():
         emovec = gpt.merge_emovec(
-            sem_feat, sem_feat,
+            sem_feat,
+            sem_feat,
             torch.tensor([sem_feat.shape[-1]]),
             torch.tensor([sem_feat.shape[-1]]),
-            alpha=1.0)
+            alpha=1.0,
+        )
     tensors["emovec"] = emovec.numpy()
     print("  emovec:", emovec.shape)
 
     # ── GPT codes (either provided or generate) ──────────────────────────────
     from sentencepiece import SentencePieceProcessor
-    sp = SentencePieceProcessor(model_file=str(Path.home() / "code/tts/index-tts/checkpoints/bpe.model"))
+
+    sp = SentencePieceProcessor(
+        model_file=str(Path.home() / "code/tts/index-tts/checkpoints/bpe.model")
+    )
     text_tokens = torch.tensor(sp.encode(text.upper()), dtype=torch.int32).unsqueeze(0)
 
     if gpt_codes_np is None:
         header("PyTorch: GPT generation")
         with torch.no_grad():
             codes, speech_latent = gpt.inference_speech(
-                sem_feat, text_tokens,
+                sem_feat,
+                text_tokens,
                 sem_feat,
                 cond_lengths=torch.tensor([sem_feat.shape[-1]]),
                 emo_cond_lengths=torch.tensor([sem_feat.shape[-1]]),
                 emo_vec=emovec,
-                do_sample=True, top_p=0.8, top_k=30, temperature=0.8,
-                num_return_sequences=1, length_penalty=0.0,
-                num_beams=3, repetition_penalty=10.0,
+                do_sample=True,
+                top_p=0.8,
+                top_k=30,
+                temperature=0.8,
+                num_return_sequences=1,
+                length_penalty=0.0,
+                num_beams=3,
+                repetition_penalty=10.0,
                 max_generate_length=1500,
             )
         # strip stop token
@@ -210,7 +250,9 @@ def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
             stop_idx = (codes[0] == stop).nonzero(as_tuple=True)[0][0].item()
             codes = codes[:, :stop_idx]
         tensors["gpt_codes"] = codes.numpy()
-        print(f"  gpt_codes: {codes.shape} (stop found: {stop_idx if 'stop_idx' in dir() else 'max'})")
+        print(
+            f"  gpt_codes: {codes.shape} (stop found: {stop_idx if 'stop_idx' in dir() else 'max'})"
+        )
         gpt_codes_np = codes.numpy()
     else:
         print(f"  (using provided codes: {gpt_codes_np.shape})")
@@ -221,23 +263,31 @@ def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
     code_lens_t = torch.tensor([codes.shape[-1]])
     use_speed = torch.zeros(sem_feat.size(0)).long()
     with torch.no_grad():
-        if 'speech_latent' not in dir():
+        if "speech_latent" not in dir():
             # When codes were provided externally, re-run inference_speech to get speech_latent
             _, speech_latent = gpt.inference_speech(
-                sem_feat, text_tokens,
+                sem_feat,
+                text_tokens,
                 sem_feat,
                 cond_lengths=torch.tensor([sem_feat.shape[-1]]),
                 emo_cond_lengths=torch.tensor([sem_feat.shape[-1]]),
                 emo_vec=emovec,
-                do_sample=True, top_p=0.8, top_k=30, temperature=0.8,
-                num_return_sequences=1, length_penalty=0.0,
-                num_beams=3, repetition_penalty=10.0,
+                do_sample=True,
+                top_p=0.8,
+                top_k=30,
+                temperature=0.8,
+                num_return_sequences=1,
+                length_penalty=0.0,
+                num_beams=3,
+                repetition_penalty=10.0,
                 max_generate_length=codes.shape[-1] + 1,
             )
         latent = gpt(
-            speech_latent, text_tokens,
+            speech_latent,
+            text_tokens,
             torch.tensor([text_tokens.shape[-1]]),
-            codes, torch.tensor([codes.shape[-1]]),
+            codes,
+            torch.tensor([codes.shape[-1]]),
             sem_feat,
             cond_mel_lengths=torch.tensor([sem_feat.shape[-1]]),
             emo_cond_mel_lengths=torch.tensor([sem_feat.shape[-1]]),
@@ -247,12 +297,12 @@ def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
         tensors["gpt_latent"] = latent.numpy()
         print("  gpt_latent:", latent.shape)
 
-        latent_proj = s2mel.models['gpt_layer'](latent)
+        latent_proj = s2mel.models["gpt_layer"](latent)
         tensors["gpt_latent_proj"] = latent_proj.numpy()
         print("  gpt_latent_proj:", latent_proj.shape)
 
         vq_emb = semantic_codec.quantizer.vq2emb(codes.unsqueeze(1))  # (1, dim, T)
-        vq_emb = vq_emb.transpose(1, 2)                               # (1, T, dim)
+        vq_emb = vq_emb.transpose(1, 2)  # (1, T, dim)
         tensors["vq_emb"] = vq_emb.numpy()
         print("  vq_emb:", vq_emb.shape)
 
@@ -264,24 +314,30 @@ def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
     header("PyTorch: regulator + CFM")
     target_lengths = (code_lens_t * 1.72).long()
     with torch.no_grad():
-        cond = s2mel.models['length_regulator'](
-            S_infer, ylens=target_lengths, n_quantizers=3, f0=None)[0]
+        cond = s2mel.models["length_regulator"](
+            S_infer, ylens=target_lengths, n_quantizers=3, f0=None
+        )[0]
         tensors["cond"] = cond.numpy()
         print("  cond:", cond.shape)
 
         cat_condition = torch.cat([prompt_condition, cond], dim=1)
-        mel = s2mel.models['cfm'].inference(
+        mel = s2mel.models["cfm"].inference(
             cat_condition,
             torch.LongTensor([cat_condition.size(1)]),
-            ref_mel_t, style, None, 25,
-            inference_cfg_rate=0.7)
-        mel = mel[:, :, ref_mel_t.size(-1):]
+            ref_mel_t,
+            style,
+            None,
+            25,
+            inference_cfg_rate=0.7,
+        )
+        mel = mel[:, :, ref_mel_t.size(-1) :]
         tensors["mel"] = mel.numpy()
         print("  mel:", mel.shape)
 
     # ── Stage 12: BigVGAN ────────────────────────────────────────────────────
     header("PyTorch: BigVGAN")
     from indextts.s2mel.modules.bigvgan import bigvgan
+
     bvgan_name = cfg.vocoder.name
     bvgan = bigvgan.BigVGAN.from_pretrained(bvgan_name, use_cuda_kernel=False)
     bvgan.remove_weight_norm()
@@ -296,9 +352,11 @@ def run_pytorch(text, audio_16k, audio_22k, gpt_codes_np=None):
 
 # ── MLX pipeline ─────────────────────────────────────────────────────────────
 
+
 def run_mlx(text, audio_16k, audio_22k, gpt_codes_np=None):
     """Run each stage of the MLX pipeline and return intermediate tensors."""
     import mlx.core as mx
+
     sys.path.insert(0, str(INDEXTTS_MLX_DIR))
     from indextts_mlx.config import WeightsConfig
     from indextts_mlx.models.gpt import create_unifiedvoice
@@ -323,6 +381,7 @@ def run_mlx(text, audio_16k, audio_22k, gpt_codes_np=None):
 
     header("MLX: loading models (quiet)")
     import io, contextlib
+
     with contextlib.redirect_stdout(io.StringIO()):
         w2v = create_w2vbert_model()
         w2v = load_w2vbert_model(w2v, str(cfg.w2vbert))
@@ -466,10 +525,16 @@ def run_mlx(text, audio_16k, audio_22k, gpt_codes_np=None):
     cat_condition = mx.concatenate([prompt_condition, cond], axis=1)
     cat_len = mx.array([cat_condition.shape[1]], dtype=mx.int32)
     mel = s2mel.cfm.inference(
-        mu=cat_condition, x_lens=cat_len, prompt=ref_mel_80,
-        style=style, f0=None, n_timesteps=25,
-        temperature=1.0, inference_cfg_rate=0.7)
-    mel = mel[:, :, ref_mel_80.shape[2]:]
+        mu=cat_condition,
+        x_lens=cat_len,
+        prompt=ref_mel_80,
+        style=style,
+        f0=None,
+        n_timesteps=25,
+        temperature=1.0,
+        inference_cfg_rate=0.7,
+    )
+    mel = mel[:, :, ref_mel_80.shape[2] :]
     mx.eval(mel)
     tensors["mel"] = np.array(mel)
     print("  mel:", mel.shape)
@@ -486,29 +551,45 @@ def run_mlx(text, audio_16k, audio_22k, gpt_codes_np=None):
 
 # ── helper ────────────────────────────────────────────────────────────────────
 
+
 def _compute_mel_pytorch(audio_22k):
     import librosa
+
     n_fft, hop_length, win_length, n_mels = 1024, 256, 1024, 80
     pad = (n_fft - hop_length) // 2
-    audio_padded = np.pad(audio_22k, pad, mode='reflect')
-    stft = librosa.stft(audio_padded, n_fft=n_fft, hop_length=hop_length,
-                        win_length=win_length, window='hann', center=False)
+    audio_padded = np.pad(audio_22k, pad, mode="reflect")
+    stft = librosa.stft(
+        audio_padded,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        win_length=win_length,
+        window="hann",
+        center=False,
+    )
     spec = np.sqrt(stft.real**2 + stft.imag**2 + 1e-9)
-    mel_basis = librosa.filters.mel(sr=22050, n_fft=n_fft, n_mels=n_mels,
-                                    fmin=0, fmax=None, norm='slaney', htk=False)
+    mel_basis = librosa.filters.mel(
+        sr=22050, n_fft=n_fft, n_mels=n_mels, fmin=0, fmax=None, norm="slaney", htk=False
+    )
     mel_log = np.log(np.clip(mel_basis @ spec, a_min=1e-5, a_max=None))
     return mel_log[np.newaxis, :, :].astype(np.float32)
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(description="Compare MLX vs PyTorch IndexTTS-2 pipeline")
-    parser.add_argument("--text", default=(
-        "Despite a deadlock over funding for the agency, lawmakers left town "
-        "and left Democratic and White House negotiators to try to work out a "
-        "deal in their absence."))
-    parser.add_argument("--voice", default=str(Path.home() / "audiobooks/voices/prunella_scales.wav"))
+    parser.add_argument(
+        "--text",
+        default=(
+            "Despite a deadlock over funding for the agency, lawmakers left town "
+            "and left Democratic and White House negotiators to try to work out a "
+            "deal in their absence."
+        ),
+    )
+    parser.add_argument(
+        "--voice", default=str(Path.home() / "audiobooks/voices/prunella_scales.wav")
+    )
     parser.add_argument("--save-dir", default=None, help="Directory to save tensors as .npz")
     parser.add_argument("--mlx-only", action="store_true", help="Run only the MLX pipeline")
     parser.add_argument("--pt-only", action="store_true", help="Run only the PyTorch pipeline")
@@ -525,38 +606,37 @@ def main():
     shared_codes = None
 
     if not args.mlx_only:
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("  PYTORCH PIPELINE")
-        print("="*70)
+        print("=" * 70)
         pt_tensors, shared_codes = run_pytorch(args.text, audio_16k, audio_22k)
 
     if not args.pt_only:
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("  MLX PIPELINE")
-        print("="*70)
+        print("=" * 70)
         # Use same GPT codes from PyTorch if available (for fair comparison of downstream stages)
-        mlx_tensors, _ = run_mlx(args.text, audio_16k, audio_22k,
-                                  gpt_codes_np=shared_codes)
+        mlx_tensors, _ = run_mlx(args.text, audio_16k, audio_22k, gpt_codes_np=shared_codes)
 
     if pt_tensors is not None and mlx_tensors is not None:
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("  COMPARISON")
-        print("="*70)
+        print("=" * 70)
         stages = [
             ("seamless_input_features", "seamless fbank features"),
-            ("w2vbert_hidden17",        "W2V-BERT hidden[17]"),
-            ("semantic_features",       "normalized semantic features"),
-            ("speaker_style",           "CAMPPlus speaker style"),
-            ("S_ref",                   "semantic_codec S_ref"),
-            ("prompt_condition",        "prompt regulator output"),
-            ("emovec",                  "GPT conditioning"),
-            ("gpt_latent",              "GPT latent"),
-            ("gpt_latent_proj",         "GPT latent proj"),
-            ("vq_emb",                  "vq2emb"),
-            ("S_infer",                 "S_infer (vq+latent)"),
-            ("cond",                    "inference regulator"),
-            ("mel",                     "CFM mel output"),
-            ("waveform",                "BigVGAN waveform"),
+            ("w2vbert_hidden17", "W2V-BERT hidden[17]"),
+            ("semantic_features", "normalized semantic features"),
+            ("speaker_style", "CAMPPlus speaker style"),
+            ("S_ref", "semantic_codec S_ref"),
+            ("prompt_condition", "prompt regulator output"),
+            ("emovec", "GPT conditioning"),
+            ("gpt_latent", "GPT latent"),
+            ("gpt_latent_proj", "GPT latent proj"),
+            ("vq_emb", "vq2emb"),
+            ("S_infer", "S_infer (vq+latent)"),
+            ("cond", "inference regulator"),
+            ("mel", "CFM mel output"),
+            ("waveform", "BigVGAN waveform"),
         ]
         for key, name in stages:
             pt = pt_tensors.get(key)
@@ -567,9 +647,15 @@ def main():
         save_dir = Path(args.save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
         if pt_tensors:
-            np.savez(save_dir / "pt_tensors.npz", **{k: v for k, v in pt_tensors.items() if v is not None})
+            np.savez(
+                save_dir / "pt_tensors.npz",
+                **{k: v for k, v in pt_tensors.items() if v is not None},
+            )
         if mlx_tensors:
-            np.savez(save_dir / "mlx_tensors.npz", **{k: v for k, v in mlx_tensors.items() if v is not None})
+            np.savez(
+                save_dir / "mlx_tensors.npz",
+                **{k: v for k, v in mlx_tensors.items() if v is not None},
+            )
         print(f"\nSaved tensors to {save_dir}")
 
 

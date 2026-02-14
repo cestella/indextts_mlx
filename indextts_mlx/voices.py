@@ -1,4 +1,5 @@
 """Voice directory resolution helpers."""
+
 from __future__ import annotations
 
 import warnings
@@ -53,9 +54,7 @@ def resolve_voice(voices_dir: str | Path, voice: str) -> Path:
 
     available = list_voices(d)
     avail_str = ", ".join(available) if available else "(none)"
-    raise FileNotFoundError(
-        f"Voice '{voice}' not found in {d}. Available voices: {avail_str}"
-    )
+    raise FileNotFoundError(f"Voice '{voice}' not found in {d}. Available voices: {avail_str}")
 
 
 def parse_emo_vector(raw: str | list) -> List[float]:

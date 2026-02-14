@@ -86,9 +86,7 @@ class CFM(nn.Module):
         t_span = mx.linspace(0, 1, n_timesteps + 1)
 
         # Solve ODE
-        return self.solve_euler(
-            z, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate
-        )
+        return self.solve_euler(z, x_lens, prompt, mu, style, f0, t_span, inference_cfg_rate)
 
     def solve_euler(
         self,

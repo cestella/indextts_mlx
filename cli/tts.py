@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Command-line interface for IndexTTS-2 MLX."""
+
 import sys
 import subprocess
 from pathlib import Path
@@ -10,9 +11,16 @@ import click
 from indextts_mlx import IndexTTS2, WeightsConfig
 from indextts_mlx.voices import list_voices, parse_emo_vector, resolve_voice
 from indextts_mlx.renderer import render_segments_jsonl
+from indextts_mlx.synthesize_long import synthesize_long, LongSynthesisConfig
+from indextts_mlx.segmenter import SegmenterConfig
+
+# The GPT has max_text_tokens=602; 250 tokens ~2-3 sentences is a comfortable
+# chunk size that produces natural-sounding audio without overloading the model.
+_DEFAULT_TOKEN_TARGET = 250
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
 
 def _build_config(weights_dir, bpe_model):
     kwargs = {}
@@ -33,90 +41,212 @@ def _effective_emo_alpha(emo_alpha, emo_vector, emo_text, emo_audio_prompt):
 # ── shared options ─────────────────────────────────────────────────────────────
 
 _SHARED_WEIGHTS_OPTS = [
-    click.option("--weights-dir", default=None, type=click.Path(),
-                 help="Override weights directory."),
-    click.option("--bpe-model", default=None, type=click.Path(exists=True),
-                 help="Override BPE model path."),
+    click.option(
+        "--weights-dir", default=None, type=click.Path(), help="Override weights directory."
+    ),
+    click.option(
+        "--bpe-model", default=None, type=click.Path(exists=True), help="Override BPE model path."
+    ),
 ]
 
 _SHARED_SPEAKER_OPTS = [
-    click.option("--voices-dir", default=None, type=click.Path(),
-                 help="Directory of voice .wav files. Voice names are file stems."),
-    click.option("--voice", default=None,
-                 help="Voice name resolved to voices_dir/{voice}.wav."),
-    click.option("--spk-audio-prompt", default=None, type=click.Path(exists=True),
-                 help="Reference speaker audio file (overrides --voice/--voices-dir)."),
+    click.option(
+        "--voices-dir",
+        default=None,
+        type=click.Path(),
+        help="Directory of voice .wav files. Voice names are file stems.",
+    ),
+    click.option("--voice", default=None, help="Voice name resolved to voices_dir/{voice}.wav."),
+    click.option(
+        "--spk-audio-prompt",
+        default=None,
+        type=click.Path(exists=True),
+        help="Reference speaker audio file (overrides --voice/--voices-dir).",
+    ),
 ]
 
 _SHARED_EMO_OPTS = [
-    click.option("--emo-alpha", default=0.0, show_default=True, type=float,
-                 help="Emotion blend strength (0..1). Non-zero only when an emo source is provided."),
-    click.option("--emo-vector", default=None,
-                 help='8 comma-separated floats: happy,angry,sad,afraid,disgusted,melancholic,surprised,calm'),
-    click.option("--emo-text", default=None,
-                 help="Text description of desired emotion (auto-enables --use-emo-text)."),
-    click.option("--use-emo-text/--no-use-emo-text", default=None,
-                 help="Enable/disable emo_text conditioning (default: auto)."),
-    click.option("--emo-audio-prompt", default=None, type=click.Path(exists=True),
-                 help="Path to emotion reference audio."),
+    click.option(
+        "--emo-alpha",
+        default=0.0,
+        show_default=True,
+        type=float,
+        help="Emotion blend strength (0..1). Non-zero only when an emo source is provided.",
+    ),
+    click.option(
+        "--emo-vector",
+        default=None,
+        help="8 comma-separated floats: happy,angry,sad,afraid,disgusted,melancholic,surprised,calm",
+    ),
+    click.option(
+        "--emo-text",
+        default=None,
+        help="Text description of desired emotion (auto-enables --use-emo-text).",
+    ),
+    click.option(
+        "--use-emo-text/--no-use-emo-text",
+        default=None,
+        help="Enable/disable emo_text conditioning (default: auto).",
+    ),
+    click.option(
+        "--emo-audio-prompt",
+        default=None,
+        type=click.Path(exists=True),
+        help="Path to emotion reference audio.",
+    ),
 ]
 
 _SHARED_DETERMINISM_OPTS = [
-    click.option("--seed", default=None, type=int,
-                 help="Random seed. Default (use_random=False): seed=0."),
-    click.option("--use-random/--no-use-random", default=False, show_default=True,
-                 help="Enable random sampling (non-deterministic). Off by default for audiobooks."),
+    click.option(
+        "--seed", default=None, type=int, help="Random seed. Default (use_random=False): seed=0."
+    ),
+    click.option(
+        "--use-random/--no-use-random",
+        default=False,
+        show_default=True,
+        help="Enable random sampling (non-deterministic). Off by default for audiobooks.",
+    ),
 ]
 
 _SHARED_QUALITY_OPTS = [
-    click.option("--emotion", default=1.0, show_default=True, type=float,
-                 help="Internal emotion vector scale (0=neutral, 1=default, 2=expressive)."),
-    click.option("--steps", default=10, show_default=True, type=int,
-                 help="CFM diffusion steps (10=fast, 25=quality)."),
-    click.option("--temperature", default=1.0, show_default=True, type=float,
-                 help="CFM sampling temperature."),
-    click.option("--cfg-rate", default=0.7, show_default=True, type=float,
-                 help="Classifier-free guidance rate."),
-    click.option("--max-codes", default=1500, show_default=True, type=int,
-                 help="Maximum GPT tokens to generate."),
-    click.option("--gpt-temperature", default=0.8, show_default=True, type=float,
-                 help="GPT sampling temperature (0.8 matches original IndexTTS-2)."),
-    click.option("--top-k", default=30, show_default=True, type=int,
-                 help="Top-k for GPT token sampling."),
+    click.option(
+        "--emotion",
+        default=1.0,
+        show_default=True,
+        type=float,
+        help="Internal emotion vector scale (0=neutral, 1=default, 2=expressive).",
+    ),
+    click.option(
+        "--steps",
+        default=10,
+        show_default=True,
+        type=int,
+        help="CFM diffusion steps (10=fast, 25=quality).",
+    ),
+    click.option(
+        "--temperature",
+        default=1.0,
+        show_default=True,
+        type=float,
+        help="CFM sampling temperature.",
+    ),
+    click.option(
+        "--cfg-rate",
+        default=0.7,
+        show_default=True,
+        type=float,
+        help="Classifier-free guidance rate.",
+    ),
+    click.option(
+        "--max-codes",
+        default=1500,
+        show_default=True,
+        type=int,
+        help="Maximum GPT tokens to generate.",
+    ),
+    click.option(
+        "--gpt-temperature",
+        default=0.8,
+        show_default=True,
+        type=float,
+        help="GPT sampling temperature (0.8 matches original IndexTTS-2).",
+    ),
+    click.option(
+        "--top-k", default=30, show_default=True, type=int, help="Top-k for GPT token sampling."
+    ),
 ]
 
 
 def add_options(options):
     """Decorator factory: attach a list of click.option decorators."""
+
     def decorator(f):
         for opt in reversed(options):
             f = opt(f)
         return f
+
     return decorator
 
 
 # ── main command ──────────────────────────────────────────────────────────────
 
+
 @click.command()
-# Text (positional, optional when --segments-jsonl is used)
-@click.argument("text", required=False, default=None)
+# Text input (mutually exclusive; at least one required unless --segments-jsonl)
+@click.option("--text", default=None, help="Text to synthesize.")
+@click.option(
+    "--file",
+    "text_file",
+    default=None,
+    type=click.Path(exists=True),
+    help="Text file to synthesize (UTF-8).",
+)
+# Long-text pipeline controls
+@click.option(
+    "--normalize/--no-normalize",
+    default=True,
+    show_default=True,
+    help="Run NeMo text normalization before synthesis (requires nemo_text_processing).",
+)
+@click.option(
+    "--language",
+    default="english",
+    show_default=True,
+    help="Language for normalization and segmentation.",
+)
+@click.option(
+    "--token-target",
+    default=_DEFAULT_TOKEN_TARGET,
+    show_default=True,
+    type=int,
+    help="Target BPE tokens per synthesis chunk. Chunks always break on sentence "
+    "boundaries — sentences are never split mid-way. Packs sentences until "
+    "this limit is reached, then starts a new chunk (GPT hard max ~600).",
+)
+@click.option(
+    "--silence-ms",
+    default=300,
+    show_default=True,
+    type=int,
+    help="Milliseconds of silence inserted between synthesized chunks. "
+    "Ignored when --crossfade-ms > 0.",
+)
+@click.option(
+    "--crossfade-ms",
+    default=10,
+    show_default=True,
+    type=int,
+    help="Milliseconds of linear crossfade overlap between chunks. "
+    "When non-zero, replaces silence with a smooth blend.",
+)
 # Speaker
 @add_options(_SHARED_SPEAKER_OPTS)
-# Legacy --voice alias (kept for backward compat; was required path arg)
-@click.option("--voice-file", default=None, type=click.Path(exists=True), hidden=True,
-              help="[Deprecated] Use --spk-audio-prompt instead.")
+# Legacy --voice alias (kept for backward compat)
+@click.option(
+    "--voice-file",
+    default=None,
+    type=click.Path(exists=True),
+    hidden=True,
+    help="[Deprecated] Use --spk-audio-prompt instead.",
+)
 # Output
-@click.option("--out", default="output.wav", show_default=True,
-              help="Output WAV file.")
-@click.option("--audio-format", default="wav", show_default=True,
-              type=click.Choice(["wav", "pcm"], case_sensitive=False),
-              help="Output audio format.")
-@click.option("--sample-rate", default=22050, show_default=True, type=int,
-              help="Output sample rate (Hz).")
-@click.option("--play", is_flag=True,
-              help="Play output via afplay after synthesis (macOS).")
-@click.option("--return-timestamps", is_flag=True,
-              help="Print segment timestamps to stdout (placeholder for future support).")
+@click.option(
+    "--out",
+    default="output.wav",
+    show_default=True,
+    help="Output file. Extension determines format: .wav, .mp3, .pcm. "
+    "Use --audio-format to override.",
+)
+@click.option(
+    "--audio-format",
+    default=None,
+    type=click.Choice(["wav", "mp3", "pcm"], case_sensitive=False),
+    help="Override output format (default: infer from --out extension).",
+)
+@click.option(
+    "--sample-rate", default=22050, show_default=True, type=int, help="Output sample rate (Hz)."
+)
+@click.option("--play", is_flag=True, help="Play output via afplay after synthesis (macOS).")
 # Emotion
 @add_options(_SHARED_EMO_OPTS)
 # Determinism
@@ -126,30 +256,79 @@ def add_options(options):
 # Weights
 @add_options(_SHARED_WEIGHTS_OPTS)
 # JSONL chapter mode
-@click.option("--segments-jsonl", default=None, type=click.Path(exists=True),
-              help="JSONL file for chapter rendering (one segment JSON per line).")
-@click.option("--output", default=None, type=click.Path(),
-              help="Chapter output WAV path (JSONL mode; defaults to --out value).")
-@click.option("--cache-dir", default=None, type=click.Path(),
-              help="Segment audio cache directory (JSONL mode).")
+@click.option(
+    "--segments-jsonl",
+    default=None,
+    type=click.Path(exists=True),
+    help="JSONL file for chapter rendering (one segment JSON per line).",
+)
+@click.option(
+    "--output",
+    default=None,
+    type=click.Path(),
+    help="Chapter output WAV path (JSONL mode; defaults to --out value).",
+)
+@click.option(
+    "--cache-dir",
+    default=None,
+    type=click.Path(),
+    help="Segment audio cache directory (JSONL mode).",
+)
 # Utility
-@click.option("--list-voices", "do_list_voices", is_flag=True,
-              help="List available voice names in --voices-dir and exit.")
-@click.option("-v", "--verbose", is_flag=True,
-              help="Print effective settings summary.")
+@click.option(
+    "--list-voices",
+    "do_list_voices",
+    is_flag=True,
+    help="List available voice names in --voices-dir and exit.",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Print effective settings summary.")
 def main(
-    text, voice, voice_file, spk_audio_prompt, voices_dir,
-    out, audio_format, sample_rate, play, return_timestamps,
-    emotion, emo_alpha, emo_vector, emo_text, use_emo_text, emo_audio_prompt,
-    seed, use_random,
-    steps, temperature, cfg_rate, max_codes, gpt_temperature, top_k,
-    weights_dir, bpe_model,
-    segments_jsonl, output, cache_dir,
-    do_list_voices, verbose,
+    text,
+    text_file,
+    normalize,
+    language,
+    token_target,
+    silence_ms,
+    crossfade_ms,
+    voice,
+    voice_file,
+    spk_audio_prompt,
+    voices_dir,
+    out,
+    audio_format,
+    sample_rate,
+    play,
+    emotion,
+    emo_alpha,
+    emo_vector,
+    emo_text,
+    use_emo_text,
+    emo_audio_prompt,
+    seed,
+    use_random,
+    steps,
+    temperature,
+    cfg_rate,
+    max_codes,
+    gpt_temperature,
+    top_k,
+    weights_dir,
+    bpe_model,
+    segments_jsonl,
+    output,
+    cache_dir,
+    do_list_voices,
+    verbose,
 ):
     """Synthesize speech with IndexTTS-2 (MLX).
 
-    TEXT is the text to synthesize. Omit when using --segments-jsonl.
+    Provide input via --text or --file. Text is always chunked and run through
+    the long-text pipeline (normalize → segment → synthesize → stitch).
+
+    \b
+    Input (pick one):
+      --text "..."               inline text
+      --file PATH                read text from a UTF-8 file
 
     \b
     Speaker source (pick one; spk-audio-prompt wins):
@@ -171,11 +350,11 @@ def main(
 
     \b
     Examples:
-      indextts-tts "Hello world" --spk-audio-prompt speaker.wav
+      indextts-tts --text "Hello world" --spk-audio-prompt speaker.wav
 
-      indextts-tts "Hello world" --voices-dir ~/voices --voice Emma
+      indextts-tts --file chapter01.txt --voices-dir ~/voices --voice Emma --out ch01.wav
 
-      indextts-tts "What a day!" --spk-audio-prompt speaker.wav \\
+      indextts-tts --text "What a day!" --spk-audio-prompt speaker.wav \\
           --emo-vector "0.8,0,0,0,0,0,0,0.2" --emo-alpha 0.5
 
       indextts-tts --segments-jsonl chapter01.jsonl \\
@@ -194,7 +373,7 @@ def main(
             click.echo(f"No voices found in {voices_dir}", err=True)
         return
 
-    # ── Backward-compat: --voice-file  ───────────────────────────────────────
+    # ── Backward-compat: --voice-file ─────────────────────────────────────────
     if voice_file and not spk_audio_prompt:
         spk_audio_prompt = voice_file
 
@@ -219,7 +398,12 @@ def main(
         if emo_text:
             click.echo(f"  emo_text: {emo_text!r}  |  use_emo_text: {use_emo_text}")
         click.echo(f"  seed: {seed}  |  use_random: {use_random}")
-        click.echo(f"  cfm_steps: {steps}  |  sample_rate: {sample_rate}  |  format: {audio_format}")
+        click.echo(
+            f"  normalize: {normalize}  |  language: {language}  |  token_target: {token_target}"
+        )
+        click.echo(
+            f"  cfm_steps: {steps}  |  sample_rate: {sample_rate}  |  format: {audio_format}"
+        )
 
     config = _build_config(weights_dir, bpe_model)
 
@@ -258,23 +442,68 @@ def main(
             subprocess.run(["afplay", str(chapter_out)], check=False)
         return
 
-    # ── Single-text mode ──────────────────────────────────────────────────────
-    if not text:
-        raise click.UsageError("TEXT argument is required (or use --segments-jsonl for chapter mode).")
+    # ── Text input mode ───────────────────────────────────────────────────────
+    if text and text_file:
+        raise click.UsageError("Provide --text or --file, not both.")
+    if not text and not text_file:
+        raise click.UsageError(
+            "Provide --text or --file (or use --segments-jsonl for chapter mode)."
+        )
+
+    if text_file:
+        input_text = Path(text_file).read_text(encoding="utf-8")
+    else:
+        input_text = text
 
     click.echo(f"Loading models from {config.weights_dir}...")
     tts = IndexTTS2(config=config)
 
-    click.echo(f"Synthesizing: {text[:60]}{'...' if len(text) > 60 else ''}")
-    if verbose or True:  # always show speaker line
-        spk_label = spk_audio_prompt or (f"{voice} ({voices_dir})" if voice else "none")
-        click.echo(f"  Speaker: {spk_label}  |  Emotion: {emotion}  |  Steps: {steps}")
+    preview = input_text[:80].replace("\n", " ")
+    click.echo(f"Synthesizing: {preview}{'...' if len(input_text) > 80 else ''}")
+    spk_label = spk_audio_prompt or (f"{voice} ({voices_dir})" if voice else "none")
+    click.echo(f"  Speaker: {spk_label}  |  Emotion: {emotion}  |  Steps: {steps}")
+    click.echo(
+        f"  Normalize: {normalize}  |  Language: {language}  |  Token target: {token_target}"
+    )
 
-    audio = tts.synthesize(
-        text=text,
+    seg_config = SegmenterConfig(
+        language=language,
+        strategy="token_count",
+        token_target=token_target,
+        bpe_model_path=str(config.bpe_model),
+    )
+    long_config = LongSynthesisConfig(
+        language=language,
+        normalize=normalize,
+        silence_between_chunks_ms=silence_ms,
+        crossfade_ms=crossfade_ms,
+        segmenter_config=seg_config,
+        verbose=verbose,
+    )
+
+    chunk_start_times: list = []
+
+    def _on_chunk(i, total, chunk_text):
+        preview = chunk_text[:60].replace("\n", " ")
+        click.echo(f"  [{i+1}/{total}] {preview!r}")
+        chunk_start_times.append(i)  # just a marker; timing is in on_chunk_done
+
+    def _on_chunk_done(i, total, stats):
+        audio_dur = stats["audio_duration_s"]
+        wall_time = stats["wall_time_s"]
+        rtf = stats["realtime_factor"]
+        click.echo(
+            f"         audio: {audio_dur:.2f}s | "
+            f"wall: {wall_time:.1f}s | "
+            f"{rtf:.1f}x realtime"
+        )
+
+    audio = synthesize_long(
+        input_text,
+        tts=tts,
+        spk_audio_prompt=spk_audio_prompt,
         voices_dir=voices_dir,
         voice=voice,
-        spk_audio_prompt=spk_audio_prompt,
         emotion=emotion,
         emo_alpha=emo_alpha,
         emo_vector=parsed_emo_vector,
@@ -285,33 +514,66 @@ def main(
         use_random=use_random,
         cfm_steps=steps,
         temperature=temperature,
-        cfg_rate=cfg_rate,
         max_codes=max_codes,
+        cfg_rate=cfg_rate,
         gpt_temperature=gpt_temperature,
         top_k=top_k,
+        config=long_config,
+        on_chunk=_on_chunk,
+        on_chunk_done=_on_chunk_done,
     )
 
     # Resample if requested
     if sample_rate != 22050:
         import librosa
+
         audio = librosa.resample(audio, orig_sr=22050, target_sr=sample_rate).astype(np.float32)
 
     duration = len(audio) / sample_rate
     out_path = Path(out)
 
-    if audio_format == "pcm":
-        raw = (audio * 32767).astype(np.int16).tobytes()
-        out_path.with_suffix(".pcm").write_bytes(raw)
-        click.echo(f"Saved {duration:.2f}s of PCM audio to {out_path.with_suffix('.pcm')}")
-    else:
-        sf.write(str(out_path), audio, sample_rate)
-        click.echo(f"Saved {duration:.2f}s of audio to {out_path}")
+    # Resolve format: explicit flag > file extension > wav
+    ext = out_path.suffix.lstrip(".").lower()
+    fmt = (audio_format or ext or "wav").lower()
 
-    if return_timestamps:
-        click.echo(f"Timestamps: 0.000 - {duration:.3f}s (full segment)")
+    if fmt == "pcm":
+        pcm_path = out_path.with_suffix(".pcm")
+        raw = (audio * 32767).astype(np.int16).tobytes()
+        pcm_path.write_bytes(raw)
+        click.echo(f"Saved {duration:.2f}s of PCM audio to {pcm_path}")
+        out_path = pcm_path
+    elif fmt == "mp3":
+        mp3_path = out_path.with_suffix(".mp3")
+        _write_mp3(audio, sample_rate, mp3_path)
+        click.echo(f"Saved {duration:.2f}s of MP3 audio to {mp3_path}")
+        out_path = mp3_path
+    else:
+        wav_path = out_path.with_suffix(".wav")
+        sf.write(str(wav_path), audio, sample_rate)
+        click.echo(f"Saved {duration:.2f}s of audio to {wav_path}")
+        out_path = wav_path
 
     if play:
         subprocess.run(["afplay", str(out_path)], check=False)
+
+
+def _write_mp3(audio: np.ndarray, sample_rate: int, path: Path) -> None:
+    """Write float32 audio to an MP3 file via pydub (requires ffmpeg)."""
+    try:
+        from pydub import AudioSegment
+    except ImportError:
+        raise click.ClickException(
+            "pydub is required for MP3 output. Install with: pip install pydub\n"
+            "(also requires ffmpeg: brew install ffmpeg)"
+        )
+    pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
+    seg = AudioSegment(
+        pcm.tobytes(),
+        frame_rate=sample_rate,
+        sample_width=2,
+        channels=1,
+    )
+    seg.export(str(path), format="mp3", bitrate="192k")
 
 
 if __name__ == "__main__":

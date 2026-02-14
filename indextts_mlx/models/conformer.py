@@ -148,7 +148,11 @@ class RelPositionMultiHeadedAttention(nn.Module):
         v = self.linear_v(x).reshape(B, T, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
 
         # Project positional embeddings
-        p = self.linear_pos(pos_emb).reshape(B, T, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        p = (
+            self.linear_pos(pos_emb)
+            .reshape(B, T, self.num_heads, self.head_dim)
+            .transpose(0, 2, 1, 3)
+        )
 
         # Compute attention with position bias
         # q_with_bias_u = q + pos_bias_u
@@ -336,7 +340,9 @@ class ConformerEncoder(nn.Module):
         # Final norm
         self.after_norm = nn.LayerNorm(output_dim)
 
-    def __call__(self, x: mx.array, lengths: Optional[mx.array] = None) -> Tuple[mx.array, Optional[mx.array]]:
+    def __call__(
+        self, x: mx.array, lengths: Optional[mx.array] = None
+    ) -> Tuple[mx.array, Optional[mx.array]]:
         """
         Args:
             x: (B, T, input_dim) mel spectrogram
@@ -361,7 +367,7 @@ class ConformerEncoder(nn.Module):
             mask = mask[:, None, :]  # (B, 1, T)
 
         # Positional embeddings (same as input for relative position)
-        pos_emb = self.pos_enc.pe[:, :x.shape[1], :]
+        pos_emb = self.pos_enc.pe[:, : x.shape[1], :]
         pos_emb = mx.broadcast_to(pos_emb, (x.shape[0], x.shape[1], x.shape[2]))
 
         # Apply Conformer layers

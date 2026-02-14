@@ -11,6 +11,7 @@ from pathlib import Path
 def pipeline_instance(weights_dir, bpe_model_path):
     from indextts_mlx.config import WeightsConfig
     from indextts_mlx.pipeline import IndexTTS2
+
     cfg = WeightsConfig(weights_dir=weights_dir, bpe_model=bpe_model_path)
     return IndexTTS2(config=cfg)
 
@@ -52,6 +53,7 @@ def test_synthesize_emotion_param(pipeline_instance, reference_audio_np):
 def test_synthesize_output_file(pipeline_instance, reference_audio_np, tmp_path):
     """synthesize() can write output to a WAV file."""
     import soundfile as sf
+
     _, audio_22k = reference_audio_np
     out_path = tmp_path / "test_out.wav"
 

@@ -51,15 +51,10 @@ class AdaptiveLayerNorm(nn.Module):
 
         # Projection for modulation parameters
         self.modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(normalized_shape, 2 * normalized_shape)
+            nn.SiLU(), nn.Linear(normalized_shape, 2 * normalized_shape)
         )
 
-    def __call__(
-        self,
-        x: mx.array,
-        conditioning: Optional[mx.array] = None
-    ) -> mx.array:
+    def __call__(self, x: mx.array, conditioning: Optional[mx.array] = None) -> mx.array:
         """Apply adaptive layer normalization.
 
         Args:
@@ -100,7 +95,7 @@ class TimestepEmbedder(nn.Module):
         hidden_size: int,
         frequency_embedding_size: int = 256,
         max_period: int = 10000,
-        scale: float = 1000.0
+        scale: float = 1000.0,
     ):
         """Initialize timestep embedder.
 
@@ -120,14 +115,12 @@ class TimestepEmbedder(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(frequency_embedding_size, hidden_size),
             nn.SiLU(),
-            nn.Linear(hidden_size, hidden_size)
+            nn.Linear(hidden_size, hidden_size),
         )
 
         # Precompute frequency bands
         half = frequency_embedding_size // 2
-        freqs = mx.exp(
-            -math.log(max_period) * mx.arange(0, half, dtype=mx.float32) / half
-        )
+        freqs = mx.exp(-math.log(max_period) * mx.arange(0, half, dtype=mx.float32) / half)
         self.freqs = freqs
 
     def timestep_embedding(self, t: mx.array) -> mx.array:
@@ -148,10 +141,7 @@ class TimestepEmbedder(nn.Module):
 
         # Handle odd frequency_embedding_size
         if self.frequency_embedding_size % 2:
-            embedding = mx.concatenate(
-                [embedding, mx.zeros_like(embedding[:, :1])],
-                axis=-1
-            )
+            embedding = mx.concatenate([embedding, mx.zeros_like(embedding[:, :1])], axis=-1)
 
         return embedding
 
@@ -175,6 +165,7 @@ class RMSNorm(nn.Module):
     RMSNorm normalizes using RMS instead of mean and variance like LayerNorm.
     It has a learnable scale parameter but no bias.
     """
+
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
         self.eps = eps
@@ -262,10 +253,7 @@ class FinalLayer(nn.Module):
         self.norm_final = nn.LayerNorm(hidden_size, affine=False, eps=1e-6)
         self.linear = nn.Linear(hidden_size, patch_size * patch_size * out_channels)
 
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_size, 2 * hidden_size)
-        )
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size))
 
     def __call__(self, x: mx.array, c: mx.array) -> mx.array:
         """Apply final layer.
@@ -291,11 +279,7 @@ class FinalLayer(nn.Module):
         return x_out
 
 
-def precompute_freqs_cis(
-    seq_len: int,
-    n_elem: int,
-    base: int = 10000
-) -> mx.array:
+def precompute_freqs_cis(seq_len: int, n_elem: int, base: int = 10000) -> mx.array:
     """Precompute frequency tensor for rotary positional embeddings.
 
     Args:
@@ -342,10 +326,13 @@ def apply_rotary_emb(x: mx.array, freqs_cis: mx.array) -> mx.array:
     # Apply rotation:
     # real' = real * cos - imag * sin
     # imag' = imag * cos + real * sin
-    x_out = mx.stack([
-        xshaped[..., 0] * freqs_cis[..., 0] - xshaped[..., 1] * freqs_cis[..., 1],
-        xshaped[..., 1] * freqs_cis[..., 0] + xshaped[..., 0] * freqs_cis[..., 1],
-    ], axis=-1)
+    x_out = mx.stack(
+        [
+            xshaped[..., 0] * freqs_cis[..., 0] - xshaped[..., 1] * freqs_cis[..., 1],
+            xshaped[..., 1] * freqs_cis[..., 0] + xshaped[..., 0] * freqs_cis[..., 1],
+        ],
+        axis=-1,
+    )
 
     # Flatten back to original shape
     x_out = x_out.reshape(*x.shape)
@@ -375,14 +362,14 @@ def reflect_pad1d(x: mx.array, padding: tuple[int, int]) -> mx.array:
 
     if pad_left > 0:
         # Reflect left: take elements [1:pad_left+1] and reverse
-        left_reflect = x[:, 1:pad_left+1, :]  # (batch, pad_left, channels)
+        left_reflect = x[:, 1 : pad_left + 1, :]  # (batch, pad_left, channels)
         # Reverse using array indexing: [:, ::-1, :]
         left_reflect = left_reflect[:, ::-1, :]
         parts.insert(0, left_reflect)
 
     if pad_right > 0:
         # Reflect right: take elements [-pad_right-1:-1] and reverse
-        right_reflect = x[:, -pad_right-1:-1, :]  # (batch, pad_right, channels)
+        right_reflect = x[:, -pad_right - 1 : -1, :]  # (batch, pad_right, channels)
         # Reverse using array indexing: [:, ::-1, :]
         right_reflect = right_reflect[:, ::-1, :]
         parts.append(right_reflect)

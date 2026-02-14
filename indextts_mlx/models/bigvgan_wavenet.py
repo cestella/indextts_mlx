@@ -50,11 +50,7 @@ class WaveNetResidualBlock(nn.Module):
         # Dropout
         self.dropout = nn.Dropout(p_dropout) if p_dropout > 0 else None
 
-    def __call__(
-        self,
-        x: mx.array,
-        g_cond: Optional[mx.array] = None
-    ) -> mx.array:
+    def __call__(self, x: mx.array, g_cond: Optional[mx.array] = None) -> mx.array:
         """Apply WaveNet residual block.
 
         Args:
@@ -71,7 +67,9 @@ class WaveNetResidualBlock(nn.Module):
         # Calculate extra padding for output length
         length = x.shape[1]
         n_frames = (length - effective_kernel_size + padding_total) / self.stride + 1
-        ideal_length = (math.ceil(n_frames) - 1) * self.stride + (effective_kernel_size - padding_total)
+        ideal_length = (math.ceil(n_frames) - 1) * self.stride + (
+            effective_kernel_size - padding_total
+        )
         extra_padding = ideal_length - length
 
         # Apply reflect padding (matching PyTorch's pad_mode='reflect')
@@ -144,7 +142,7 @@ class WaveNet(nn.Module):
         # WaveNet residual blocks (dilated convolutions)
         self.in_layers = []
         for i in range(n_layers):
-            dilation = dilation_rate ** i if dilation_rate > 1 else 1
+            dilation = dilation_rate**i if dilation_rate > 1 else 1
             self.in_layers.append(
                 WaveNetResidualBlock(
                     hidden_channels,
@@ -160,9 +158,7 @@ class WaveNet(nn.Module):
         self.res_skip_layers = []
         for i in range(n_layers):
             out_channels = hidden_channels if i == n_layers - 1 else 2 * hidden_channels
-            self.res_skip_layers.append(
-                nn.Conv1d(hidden_channels, out_channels, 1)
-            )
+            self.res_skip_layers.append(nn.Conv1d(hidden_channels, out_channels, 1))
 
     def __call__(
         self,

@@ -127,7 +127,7 @@ class LowPassFilter1d(nn.Module):
         # MLX doesn't have groups parameter, so we apply per-channel
         outputs = []
         for c in range(C):
-            channel_data = x[:, :, c:c+1]  # (B, T+pad, 1)
+            channel_data = x[:, :, c : c + 1]  # (B, T+pad, 1)
             # Filter shape for conv1d: (out_ch, kernel, in_ch) = (1, kernel, 1)
             filtered = mx.conv1d(channel_data, self.filter.transpose(0, 2, 1), stride=self.stride)
             outputs.append(filtered)
@@ -147,15 +147,11 @@ class UpSample1d(nn.Module):
     def __init__(self, ratio: int = 2, kernel_size: int = None):
         super().__init__()
         self.ratio = ratio
-        self.kernel_size = (
-            int(6 * ratio // 2) * 2 if kernel_size is None else kernel_size
-        )
+        self.kernel_size = int(6 * ratio // 2) * 2 if kernel_size is None else kernel_size
         self.stride = ratio
         self.pad = self.kernel_size // ratio - 1
         self.pad_left = self.pad * self.stride + (self.kernel_size - self.stride) // 2
-        self.pad_right = (
-            self.pad * self.stride + (self.kernel_size - self.stride + 1) // 2
-        )
+        self.pad_right = self.pad * self.stride + (self.kernel_size - self.stride + 1) // 2
 
         # Filter will be loaded from checkpoint
         self.filter = mx.zeros((1, 1, self.kernel_size))
@@ -185,11 +181,9 @@ class UpSample1d(nn.Module):
         # Filter shape for conv_transpose1d: (out_ch, kernel, in_ch) = (1, kernel, 1)
         outputs = []
         for c in range(C):
-            channel_data = x[:, :, c:c+1]  # (B, T+pad, 1)
+            channel_data = x[:, :, c : c + 1]  # (B, T+pad, 1)
             upsampled = mx.conv_transpose1d(
-                channel_data,
-                self.filter.transpose(0, 2, 1),  # (1, kernel, 1)
-                stride=self.stride
+                channel_data, self.filter.transpose(0, 2, 1), stride=self.stride  # (1, kernel, 1)
             )
             outputs.append(upsampled)
 
@@ -197,9 +191,9 @@ class UpSample1d(nn.Module):
 
         # Trim edges
         if self.pad_right > 0:
-            result = result[:, self.pad_left:-self.pad_right, :]
+            result = result[:, self.pad_left : -self.pad_right, :]
         else:
-            result = result[:, self.pad_left:, :]
+            result = result[:, self.pad_left :, :]
 
         # Scale by ratio
         result = self.ratio * result
@@ -215,9 +209,7 @@ class DownSample1d(nn.Module):
     def __init__(self, ratio: int = 2, kernel_size: int = None):
         super().__init__()
         self.ratio = ratio
-        self.kernel_size = (
-            int(6 * ratio // 2) * 2 if kernel_size is None else kernel_size
-        )
+        self.kernel_size = int(6 * ratio // 2) * 2 if kernel_size is None else kernel_size
         self.lowpass = LowPassFilter1d(
             cutoff=0.5 / ratio,
             half_width=0.6 / ratio,

@@ -1,4 +1,5 @@
 """Tests for voice resolution, emo_vector parsing, and precedence rules."""
+
 import warnings
 from pathlib import Path
 import pytest
@@ -6,8 +7,8 @@ import pytest
 from indextts_mlx.voices import list_voices, resolve_voice, parse_emo_vector
 from indextts_mlx.pipeline import _resolve_speaker
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def voices_dir(tmp_path):
@@ -20,6 +21,7 @@ def voices_dir(tmp_path):
 
 
 # ── list_voices ───────────────────────────────────────────────────────────────
+
 
 def test_list_voices_returns_stems(voices_dir):
     names = list_voices(voices_dir)
@@ -41,6 +43,7 @@ def test_list_voices_empty_dir(tmp_path):
 
 
 # ── resolve_voice ─────────────────────────────────────────────────────────────
+
 
 def test_resolve_voice_exact(voices_dir):
     path = resolve_voice(voices_dir, "Emma")
@@ -74,6 +77,7 @@ def test_resolve_voice_missing_dir():
 
 
 # ── parse_emo_vector ──────────────────────────────────────────────────────────
+
 
 def test_parse_emo_vector_from_string():
     vec = parse_emo_vector("0.8,0.0,0.0,0.0,0.0,0.0,0.0,0.2")
@@ -114,6 +118,7 @@ def test_parse_emo_vector_all_zeros():
 
 # ── _resolve_speaker precedence ───────────────────────────────────────────────
 
+
 def test_spk_audio_prompt_wins_over_voice(voices_dir):
     """spk_audio_prompt takes priority over voice + voices_dir."""
     direct = voices_dir / "Emma.wav"
@@ -152,6 +157,7 @@ def test_no_speaker_returns_none():
 
 # ── Auto use_emo_text precedence ──────────────────────────────────────────────
 
+
 def test_emo_text_auto_enables_use_emo_text():
     """When emo_text is set and use_emo_text is None, auto-set to True."""
     # Simulate the pipeline's logic
@@ -172,6 +178,7 @@ def test_emo_text_respects_explicit_false():
 
 
 # ── emo_vector vs emo_text precedence ─────────────────────────────────────────
+
 
 def test_emo_vector_wins_over_emo_text():
     """When both emo_vector and emo_text are provided, emo_vector wins (emo_text cleared)."""

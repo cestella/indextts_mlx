@@ -53,7 +53,9 @@ class GPT2Attention(nn.Module):
 
     def __init__(self, model_dim: int, num_heads: int):
         super().__init__()
-        assert model_dim % num_heads == 0, f"model_dim ({model_dim}) must be divisible by num_heads ({num_heads})"
+        assert (
+            model_dim % num_heads == 0
+        ), f"model_dim ({model_dim}) must be divisible by num_heads ({num_heads})"
 
         self.model_dim = model_dim
         self.num_heads = num_heads
@@ -113,7 +115,7 @@ class GPT2Attention(nn.Module):
             causal_mask = causal_mask.reshape(1, 1, T, T)
             # Use same mask value as PyTorch: finfo(float32).min
             # PyTorch: torch.finfo(torch.float32).min = -3.4028234663852886e+38
-            mask_value = -3.4028235e+38
+            mask_value = -3.4028235e38
             scores = mx.where(causal_mask == 0, mask_value, scores)
 
         # Apply attention mask if provided
@@ -200,10 +202,7 @@ class GPT2Model(nn.Module):
         self.intermediate_dim = intermediate_dim or (4 * model_dim)
 
         # Transformer blocks
-        self.h = [
-            GPT2Block(model_dim, num_heads, self.intermediate_dim)
-            for _ in range(num_layers)
-        ]
+        self.h = [GPT2Block(model_dim, num_heads, self.intermediate_dim) for _ in range(num_layers)]
 
         # Final layer norm
         self.ln_f = nn.LayerNorm(model_dim)

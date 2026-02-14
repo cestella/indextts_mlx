@@ -18,7 +18,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-timeout"]
+dev = ["pytest", "pytest-timeout", "black"]
+long = [
+    "spacy>=3.7",
+    "pysbd",
+    # nemo_text_processing + pynini must be installed manually on macOS.
+    # Requires Python 3.11 or 3.12. See README.md for instructions.
+]
 parity = [
     "torch",
     "torchaudio",
@@ -27,13 +33,24 @@ parity = [
     "huggingface_hub",
     "omegaconf",
 ]
+convert = [
+    "torch",
+    "safetensors",
+    "huggingface_hub",
+]
 
 [project.scripts]
 indextts-tts = "cli.tts:main"
+indextts-download-weights = "cli.download_weights:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["indextts_mlx*", "cli*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+include = '\.pyi?$'
 
 [tool.pytest.ini_options]
 markers = [
