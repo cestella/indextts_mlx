@@ -396,6 +396,8 @@ render_segments_jsonl(
 
 Each JSONL line is a segment record. Per-segment fields override the global defaults:
 
+`render_segments_jsonl` uses the BPE token-count segmenter by default (`segment_strategy="token_count"`, `token_target=250`); override `segment_strategy` and related params to change how chunks are built.
+
 ```jsonl
 {"segment_id": 1, "text": "Chapter One.", "segment_type": "heading", "pause_after_ms": 800}
 {"segment_id": 2, "text": "She stepped outside.", "segment_type": "narration"}

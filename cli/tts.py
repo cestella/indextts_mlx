@@ -177,8 +177,8 @@ def add_options(options):
     "--file",
     "text_file",
     default=None,
-    type=click.Path(exists=True),
-    help="Text file (.txt) or JSONL segments file (.jsonl) to synthesize (UTF-8).",
+    type=click.Path(exists=True, file_okay=True, dir_okay=True),
+    help="Text file (.txt), JSONL segments file (.jsonl), or directory of input files.",
 )
 # Long-text pipeline controls
 @click.option(
@@ -233,8 +233,15 @@ def add_options(options):
     "--out",
     default="output.wav",
     show_default=True,
-    help="Output file. Extension determines format: .wav, .mp3, .pcm. "
-    "Use --audio-format to override.",
+    help="Output file or directory. In directory mode (--file is a directory), "
+    "this must be a directory; one file per input is written there.",
+)
+@click.option(
+    "--out-ext",
+    default="mp3",
+    show_default=True,
+    type=click.Choice(["wav", "mp3", "pcm"], case_sensitive=False),
+    help="Output format for directory batch mode.",
 )
 @click.option(
     "--audio-format",
@@ -299,6 +306,7 @@ def main(
     spk_audio_prompt,
     voices_dir,
     out,
+    out_ext,
     audio_format,
     sample_rate,
     play,
@@ -333,7 +341,8 @@ def main(
     \b
     Input (pick one):
       --text "..."               inline text
-      --file PATH                read text from a UTF-8 file
+      --file PATH                read text from a UTF-8 file (.txt or .jsonl)
+      --file DIR --out DIR       batch-process all .txt/.jsonl files in a directory
 
     \b
     Speaker source (pick one; spk-audio-prompt wins):
@@ -366,6 +375,9 @@ def main(
           --voices-dir ~/voices --out chapter01.wav
 
       indextts-tts --list-voices --voices-dir ~/voices
+
+      indextts-tts --file ~/chapters --out ~/audio --out-ext mp3 \\
+          --voices-dir ~/voices --voice Emma
     """
     # ── --list-voices utility ─────────────────────────────────────────────────
     if do_list_voices:
@@ -412,6 +424,150 @@ def main(
 
     config = _build_config(weights_dir, bpe_model)
 
+    # ── Directory batch mode ──────────────────────────────────────────────────
+    if text_file and Path(text_file).is_dir():
+        in_dir = Path(text_file)
+        out_dir = Path(out)
+        if out_dir.suffix:
+            raise click.UsageError("--out must be a directory path when --file is a directory.")
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Collect all processable files (.txt and .jsonl), sorted for predictable order
+        candidates = sorted(
+            p for p in in_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in (".txt", ".jsonl")
+        )
+        if not candidates:
+            raise click.ClickException(f"No .txt or .jsonl files found in {in_dir}")
+
+        # Determine which files still need processing
+        ext = out_ext.lstrip(".")
+        pending = []
+        skipped = []
+        for inp in candidates:
+            out_file = out_dir / (inp.stem + "." + ext)
+            if out_file.exists():
+                skipped.append(inp)
+            else:
+                pending.append(inp)
+
+        click.echo(
+            f"Batch mode: {len(candidates)} file(s) in {in_dir} → {out_dir}"
+        )
+        if skipped:
+            click.echo(f"  Skipping {len(skipped)} already-processed file(s):")
+            for p in skipped:
+                click.echo(f"    {p.name} → {out_dir / (p.stem + '.' + ext)} (exists)")
+        if not pending:
+            click.echo("  Nothing to do.")
+            return
+        click.echo(f"  Processing {len(pending)} file(s):")
+        for p in pending:
+            click.echo(f"    {p.name}")
+
+        click.echo(f"Loading models from {config.weights_dir}...")
+        tts = IndexTTS2(config=config)
+
+        for idx, inp in enumerate(pending):
+            out_file = out_dir / (inp.stem + "." + ext)
+            click.echo(f"\n[{idx+1}/{len(pending)}] {inp.name} → {out_file.name}")
+
+            if inp.suffix.lower() == ".jsonl":
+                # render_segments_jsonl always writes WAV; use a temp path then convert
+                wav_out = out_file if ext == "wav" else out_file.with_suffix(".wav.tmp")
+                render_segments_jsonl(
+                    jsonl_path=inp,
+                    output_path=wav_out,
+                    tts=tts,
+                    voices_dir=voices_dir,
+                    voice=voice,
+                    spk_audio_prompt=spk_audio_prompt,
+                    emotion=emotion,
+                    emo_alpha=emo_alpha,
+                    emo_vector=parsed_emo_vector,
+                    emo_text=emo_text,
+                    use_emo_text=use_emo_text,
+                    emo_audio_prompt=emo_audio_prompt,
+                    seed=seed,
+                    use_random=use_random,
+                    cfm_steps=steps,
+                    temperature=temperature,
+                    max_codes=max_codes,
+                    cfg_rate=cfg_rate,
+                    gpt_temperature=gpt_temperature,
+                    top_k=top_k,
+                    sample_rate=sample_rate,
+                    normalize=normalize,
+                    language=language,
+                    token_target=token_target,
+                    silence_between_chunks_ms=silence_ms,
+                    crossfade_ms=crossfade_ms,
+                    cache_dir=cache_dir,
+                    emotion_config=emotion_config,
+                    enable_drift=enable_drift,
+                    end_chime=end_chime,
+                    verbose=True,
+                )
+                if ext != "wav":
+                    wav_audio, wav_sr = sf.read(str(wav_out), dtype="float32")
+                    wav_out.unlink()
+                    if ext == "mp3":
+                        _write_mp3(wav_audio, wav_sr, out_file)
+                    elif ext == "pcm":
+                        out_file.write_bytes((np.clip(wav_audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes())
+            else:
+                # Plain text → synthesize_long
+                input_text = inp.read_text(encoding="utf-8")
+                seg_config = SegmenterConfig(
+                    language=language,
+                    strategy="token_count",
+                    token_target=token_target,
+                    bpe_model_path=str(config.bpe_model),
+                )
+                long_config = LongSynthesisConfig(
+                    language=language,
+                    normalize=normalize,
+                    silence_between_chunks_ms=silence_ms,
+                    crossfade_ms=crossfade_ms,
+                    segmenter_config=seg_config,
+                    verbose=verbose,
+                )
+                audio = synthesize_long(
+                    input_text,
+                    tts=tts,
+                    spk_audio_prompt=spk_audio_prompt,
+                    voices_dir=voices_dir,
+                    voice=voice,
+                    emotion=emotion,
+                    emo_alpha=emo_alpha,
+                    emo_vector=parsed_emo_vector,
+                    emo_text=emo_text,
+                    use_emo_text=use_emo_text,
+                    emo_audio_prompt=emo_audio_prompt,
+                    seed=seed,
+                    use_random=use_random,
+                    cfm_steps=steps,
+                    temperature=temperature,
+                    max_codes=max_codes,
+                    cfg_rate=cfg_rate,
+                    gpt_temperature=gpt_temperature,
+                    top_k=top_k,
+                    config=long_config,
+                )
+                if sample_rate != 22050:
+                    import librosa as _librosa
+                    audio = _librosa.resample(audio, orig_sr=22050, target_sr=sample_rate).astype(np.float32)
+                if ext == "mp3":
+                    _write_mp3(audio, sample_rate, out_file)
+                elif ext == "pcm":
+                    out_file.write_bytes((np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes())
+                else:
+                    sf.write(str(out_file), audio, sample_rate)
+                click.echo(f"  Saved {len(audio)/sample_rate:.2f}s → {out_file}")
+
+        click.echo(f"\nBatch complete: {len(pending)} file(s) written to {out_dir}")
+        return
+
     # ── JSONL chapter mode (auto-detected from .jsonl extension) ─────────────
     if text_file and Path(text_file).suffix.lower() == ".jsonl":
         chapter_out = Path(out)
@@ -442,6 +598,7 @@ def main(
             sample_rate=sample_rate,
             normalize=normalize,
             language=language,
+            token_target=token_target,
             silence_between_chunks_ms=silence_ms,
             crossfade_ms=crossfade_ms,
             cache_dir=cache_dir,

@@ -8,17 +8,16 @@ from __future__ import annotations
 
 import json
 import hashlib
-import warnings
 import numpy as np
 import soundfile as sf
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from .pipeline import IndexTTS2, OUTPUT_SAMPLE_RATE
 from .normalizer import Normalizer, NormalizerConfig
-from .synthesize_long import synthesize_long
+from .synthesize_long import synthesize_long, LongSynthesisConfig
 from .emotion_config import EmotionResolver
-from .voices import parse_emo_vector
+from .segmenter import SegmenterConfig
 
 # Sentinel so we can distinguish "not passed" from None
 _UNSET = object()
@@ -73,6 +72,7 @@ def _segment_cache_key(
     gpt_temperature: float,
     top_k: int,
     sample_rate: int,
+    segmenter_signature: str,
 ) -> str:
     """Return a stable hex digest for the synthesis parameters (for caching)."""
     parts = [
@@ -91,6 +91,7 @@ def _segment_cache_key(
         str(gpt_temperature),
         str(top_k),
         str(sample_rate),
+        segmenter_signature,
     ]
     return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
 
@@ -122,6 +123,10 @@ def render_segments_jsonl(
     # Long-text pipeline controls (applied per segment)
     normalize: bool = True,
     language: str = "english",
+    token_target: int = 250,
+    segment_strategy: Literal["token_count", "char_count", "sentence_count"] = "token_count",
+    max_chars: int = 300,
+    sentences_per_chunk: int = 3,
     silence_between_chunks_ms: int = 300,
     crossfade_ms: int = 10,
     # Cache directory (None = no caching)
@@ -149,6 +154,8 @@ def render_segments_jsonl(
         voice: Default voice name.
         spk_audio_prompt: Default speaker prompt path.
         ... (all other synthesize() params as defaults) ...
+        token_target: Target BPE tokens per chunk (token_count strategy).
+        segment_strategy: Chunking strategy ('token_count', 'char_count', 'sentence_count').
         cache_dir: Directory for per-segment audio cache (.npy files).
         model_version: String embedded in cache keys.
         verbose: Print per-segment progress.
@@ -192,6 +199,25 @@ def render_segments_jsonl(
 
     # Build the normalizer once so NeMo is not re-initialised per segment.
     shared_normalizer = Normalizer(NormalizerConfig(language=language)) if normalize else None
+    seg_config = SegmenterConfig(
+        language=language,
+        strategy=segment_strategy,
+        token_target=token_target if segment_strategy == "token_count" else None,
+        max_chars=max_chars,
+        sentences_per_chunk=sentences_per_chunk,
+        bpe_model_path=str(tts.config.bpe_model) if segment_strategy == "token_count" else None,
+    )
+    long_config = LongSynthesisConfig(
+        language=language,
+        normalize=normalize,
+        silence_between_chunks_ms=silence_between_chunks_ms,
+        crossfade_ms=crossfade_ms,
+        segmenter_config=seg_config,
+        normalizer_config=shared_normalizer.config
+        if shared_normalizer
+        else NormalizerConfig(language=language),
+        verbose=False,
+    )
 
     chunks: List[np.ndarray] = []
     total_segments = len(records)
@@ -230,16 +256,29 @@ def render_segments_jsonl(
         pause_after = int(record.get("pause_after_ms", 0))
 
         # ── Emotion label resolution ──────────────────────────────────────────
-        # If a resolver is available, use it to map the emotion label to
-        # (emo_vector, emo_alpha). Per-segment explicit fields take precedence
-        # over the preset; global CLI defaults do not override the preset.
         emotion_label = _rec_emotion if isinstance(_rec_emotion, str) else None
+        seg_has_explicit_emo = record.get("emo_vector") is not None or record.get("emo_alpha") is not None
+        chunk_resolver = None  # resolver passed to synthesize_long for per-chunk drift
+
         if resolver is not None:
-            seg_emo_vector, seg_emo_alpha = resolver.resolve(
-                label=emotion_label,
-                override_vector=record.get("emo_vector"),
-                override_alpha=record.get("emo_alpha"),
-            )
+            if seg_has_explicit_emo or not enable_drift:
+                # No drift: resolve once, get stable base for this segment.
+                seg_emo_vector, seg_emo_alpha = resolver.resolve(
+                    label=emotion_label,
+                    override_vector=record.get("emo_vector"),
+                    override_alpha=record.get("emo_alpha"),
+                )
+            else:
+                # Drift active and no explicit overrides: use preset base for the
+                # cache key (stable, no tick), then hand the resolver to
+                # synthesize_long so drift advances per chunk (sentence).
+                effective_label = emotion_label if (emotion_label and emotion_label in resolver.config.emotions) else "neutral"
+                if effective_label not in resolver.config.emotions:
+                    effective_label = next(iter(resolver.config.emotions))
+                preset = resolver.config.emotions[effective_label]
+                seg_emo_vector = list(preset.base.emo_vector)
+                seg_emo_alpha = preset.base.emo_alpha
+                chunk_resolver = resolver
 
         # Resolve effective spk source string for cache key
         if seg_spk is not None:
@@ -269,6 +308,7 @@ def render_segments_jsonl(
                 seg_gpt_temperature,
                 seg_top_k,
                 seg_sample_rate,
+                repr(seg_config),
             )
             cache_file = cache_dir / f"{cache_key}.npy"
             if cache_file.exists():
@@ -283,9 +323,8 @@ def render_segments_jsonl(
             if verbose:
                 preview = text[:60] + ("..." if len(text) > 60 else "")
                 emotion_tag = f" [{emotion_label}]" if emotion_label else ""
-                if enable_drift and emotion_label and seg_emo_vector is not None:
-                    vec_str = "[" + ", ".join(f"{v:.3f}" for v in seg_emo_vector) + "]"
-                    drift_tag = f" α={seg_emo_alpha:.3f} v={vec_str}"
+                if chunk_resolver is not None and emotion_label:
+                    drift_tag = f" [drift active, base α={seg_emo_alpha:.3f}]"
                 else:
                     drift_tag = ""
                 print(
@@ -326,11 +365,10 @@ def render_segments_jsonl(
                 cfg_rate=seg_cfg_rate,
                 gpt_temperature=seg_gpt_temperature,
                 top_k=seg_top_k,
-                normalize=normalize,
-                language=language,
-                silence_between_chunks_ms=silence_between_chunks_ms,
-                crossfade_ms=crossfade_ms,
+                config=long_config,
                 normalizer=shared_normalizer,
+                emotion_resolver=chunk_resolver,
+                emotion_label=emotion_label,
                 on_chunk=_on_chunk,
                 on_chunk_done=_on_chunk_done,
                 verbose=False,
@@ -362,11 +400,14 @@ def render_segments_jsonl(
         chime_audio, chime_sr = sf.read(str(end_chime), dtype="float32")
         if chime_audio.ndim > 1:
             chime_audio = chime_audio.mean(axis=1)
+        chime_audio = chime_audio.ravel()
         if chime_sr != sample_rate:
             import librosa
             chime_audio = librosa.resample(
                 chime_audio, orig_sr=chime_sr, target_sr=sample_rate
-            ).astype(np.float32)
+            ).astype(np.float32).ravel()
+        if verbose:
+            print(f"  end_chime: {len(chime_audio)/sample_rate:.2f}s from {end_chime}")
         full_audio = np.concatenate([full_audio, chime_audio])
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

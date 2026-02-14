@@ -15,6 +15,7 @@ dependencies = [
     "librosa",
     "sentencepiece",
     "click",
+    "ftfy",
 ]
 
 [project.optional-dependencies]

@@ -205,9 +205,9 @@ class TestEmotionResolverDrift:
         return EmotionResolver.from_path(p, enable_drift=True, seed=42)
 
     def test_drift_varies_across_calls(self, resolver):
+        # Each resolve() call advances the EMA state, so values should vary.
         results = [resolver.resolve("neutral") for _ in range(20)]
         alphas = [r[1] for r in results]
-        # After EMA settling, values should vary slightly
         assert not all(a == pytest.approx(alphas[0], abs=1e-9) for a in alphas)
 
     def test_drift_stays_bounded(self, tmp_path):

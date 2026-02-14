@@ -116,6 +116,11 @@ def synthesize_long(
     verbose: bool = False,
     # Optional pre-built Normalizer to reuse (avoids re-initialising NeMo on every call)
     normalizer: Optional["Normalizer"] = None,
+    # Optional EmotionResolver + label: when supplied, resolver.resolve() is called
+    # per chunk so drift advances sentence-by-sentence within the segment.
+    # Ignored when emo_vector or emo_alpha are explicitly set (overrides take precedence).
+    emotion_resolver=None,   # Optional[EmotionResolver]
+    emotion_label: Optional[str] = None,
     # Optional progress callback: f(chunk_index, total_chunks, chunk_text)
     # Called BEFORE synthesis of each chunk.
     on_chunk: Optional[Callable[[int, int, str], None]] = None,
@@ -199,6 +204,13 @@ def synthesize_long(
             base = seed if seed is not None else 0
             chunk_seed = base + i
 
+        # Per-chunk drift: advance the resolver state for each sentence so
+        # variation is smooth within the segment, not just between segments.
+        if emotion_resolver is not None:
+            chunk_emo_vector, chunk_emo_alpha = emotion_resolver.resolve(emotion_label)
+        else:
+            chunk_emo_vector, chunk_emo_alpha = emo_vector, emo_alpha
+
         t0 = time.perf_counter()
         audio = tts.synthesize(
             text=chunk,
@@ -207,8 +219,8 @@ def synthesize_long(
             voice=voice,
             reference_audio=reference_audio,
             emotion=emotion,
-            emo_alpha=emo_alpha,
-            emo_vector=emo_vector,
+            emo_alpha=chunk_emo_alpha,
+            emo_vector=chunk_emo_vector,
             emo_text=emo_text,
             use_emo_text=use_emo_text,
             emo_audio_prompt=emo_audio_prompt,

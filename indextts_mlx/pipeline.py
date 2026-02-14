@@ -191,6 +191,19 @@ class IndexTTS2:
         out = self.w2vbert(input_features=mlx_feats, attention_mask=mask, output_hidden_states=True)
         return (out.hidden_states[17] - self.semantic_mean) / self.semantic_std  # (1, T, 1024)
 
+    @staticmethod
+    def _normalize_emo_vec(emo_vector: List[float], apply_bias: bool = True) -> List[float]:
+        """Apply per-emotion bias and cap total sum at 0.8 (matches PyTorch normalize_emo_vec)."""
+        if apply_bias:
+            # [happy, angry, sad, afraid, disgusted, melancholic, surprised, calm]
+            emo_bias = [0.9375, 0.875, 1.0, 1.0, 0.9375, 0.9375, 0.6875, 0.5625]
+            emo_vector = [v * b for v, b in zip(emo_vector, emo_bias)]
+        emo_sum = sum(emo_vector)
+        if emo_sum > 0.8:
+            scale = 0.8 / emo_sum
+            emo_vector = [v * scale for v in emo_vector]
+        return emo_vector
+
     def _compute_emo_vec_from_vector(
         self,
         emo_vector: List[float],
@@ -312,6 +325,12 @@ class IndexTTS2:
 
         if emo_vector is not None:
             emo_vector = parse_emo_vector(emo_vector)
+            # emo_alpha pre-scales the emo_vector components (matches PyTorch infer_v2.py)
+            emo_vector_scale = max(0.0, min(1.0, emo_alpha))
+            if emo_vector_scale != 1.0:
+                emo_vector = [v * emo_vector_scale for v in emo_vector]
+            # Apply per-emotion bias and cap total sum at 0.8
+            emo_vector = self._normalize_emo_vec(emo_vector)
 
         # If any emo source set and emo_alpha still at default 0.0, note it's user's choice
         _has_emo_source = (

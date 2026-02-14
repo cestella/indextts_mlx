@@ -24,6 +24,11 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Any, Iterator, List, Literal, Optional
 
+try:
+    from ftfy import fix_text as _ftfy_fix_text
+except ImportError:
+    _ftfy_fix_text = None
+
 # Default spaCy model names per language
 _SPACY_MODELS: dict[str, str] = {
     "english": "en_core_web_sm",
@@ -323,14 +328,49 @@ class Segmenter:
         - Replaces em-dash / en-dash / horizontal bar / swung dash variants
           with `` -- `` (readable pause) or strips soft hyphens.
         - Replaces non-breaking hyphens with regular hyphens.
+        - Normalizes curly quotes to ASCII quotes and inserts a missing space
+          before opening quotes when they stick to a preceding word.
         - Collapses multiple spaces.
         - Ensures the sentence ends with terminal punctuation (. ? !).
         """
+        if _ftfy_fix_text is not None:
+            s = _ftfy_fix_text(s)
+
         # Soft hyphen (U+00AD) — invisible, just remove
         s = s.replace("\u00ad", "")
 
         # Non-breaking hyphen (U+2011) → regular hyphen
         s = s.replace("\u2011", "-")
+
+        # Add a space before opening quotes stuck to the prior word.
+        #
+        # U+2018 (LEFT single quote) and U+201C/U+201D/ASCII " are unambiguously
+        # quotes — always insert the space when they follow a word character.
+        s = re.sub(
+            r'(?<=[A-Za-z0-9])([\u2018\u201c\u201d"])',
+            r" \1",
+            s,
+        )
+        # Straight apostrophe (') and U+2019 (RIGHT single quote) are ambiguous:
+        # they appear in contractions (aren't, don't) AND as opening/closing quotes.
+        # Only insert a space when NOT immediately followed by a letter (contraction).
+        s = re.sub(
+            r"(?<=[A-Za-z0-9])(['\u2019])(?![A-Za-z])(?=[^'\u2019]*['\u2019])",
+            r" \1",
+            s,
+        )
+
+        # Curly single/double quotes and primes → ASCII
+        quote_map = {
+            "\u2018": "'",
+            "\u2019": "'",
+            "\u2032": "'",
+            "\u2035": "'",
+            "\u201c": '"',
+            "\u201d": '"',
+        }
+        for k, v in quote_map.items():
+            s = s.replace(k, v)
 
         # Em-dash (U+2014), en-dash (U+2013), horizontal bar (U+2015),
         # swung dash (U+2053), figure dash (U+2012) → " -- "
