@@ -21,7 +21,7 @@
       ]
     },
     "text": {
-      "description": "The text to synthesize for this segment (already normalized).",
+      "description": "The text to synthesize for this segment.",
       "type": "string",
       "minLength": 1
     },
@@ -31,93 +31,39 @@
       "enum": ["narration", "dialogue", "heading", "scene_break", "footnote", "other"]
     },
 
-    "voices_dir": {
-      "description": "Optional per-segment override for voices directory (normally supplied as a global CLI arg).",
+    "emotion": {
+      "description": "High-level emotion preset label. Renderer maps this to the per-voice calibrated (emo_vector, emo_alpha) defaults.",
       "type": "string",
-      "minLength": 1
-    },
-    "voice": {
-      "description": "Voice name resolved as {voices_dir}/{voice}.wav if spk_audio_prompt is not provided.",
-      "type": "string",
-      "minLength": 1
-    },
-    "spk_audio_prompt": {
-      "description": "Path to speaker prompt audio (overrides voice/voices_dir).",
-      "type": "string",
-      "minLength": 1
+      "enum": ["neutral", "mild_emphasis", "indignant", "joyful", "suspense", "melancholic", "calm_authority"]
     },
 
     "emo_alpha": {
-      "description": "Emotion influence strength (0..1).",
+      "description": "Emotion influence strength (0..1). Overrides preset alpha if provided.",
       "type": "number",
       "minimum": 0.0,
-      "maximum": 1.0,
-      "default": 0.0
+      "maximum": 1.0
     },
     "emo_vector": {
-      "description": "Emotion vector of 8 floats: [happy, angry, sad, afraid, disgusted, melancholic, surprised, calm].",
+      "description": "Optional low-level override vector of 8 floats: [happy, angry, sad, afraid, disgusted, melancholic, surprised, calm]. Overrides preset vector if provided.",
       "type": "array",
       "minItems": 8,
       "maxItems": 8,
       "items": { "type": "number" }
     },
     "emo_text": {
-      "description": "Emotion description used when use_emo_text=true (or auto-enabled if present).",
+      "description": "Optional low-level override emotion description used when use_emo_text=true (or auto-enabled if present).",
       "type": "string",
       "minLength": 1
     },
     "use_emo_text": {
-      "description": "Tri-state is handled by the API; in JSON we just allow boolean if specified.",
+      "description": "If present, explicitly enables/disables using emo_text. If omitted and emo_text is present, renderer should auto-enable.",
       "type": "boolean"
     },
     "emo_audio_prompt": {
-      "description": "Path to emotion reference audio (optional).",
+      "description": "Optional path to emotion reference audio (low-level override).",
       "type": "string",
       "minLength": 1
     },
-
-    "seed": {
-      "description": "Optional deterministic seed.",
-      "type": "integer"
-    },
-    "use_random": {
-      "description": "Enable randomness (discouraged for audiobooks).",
-      "type": "boolean",
-      "default": false
-    },
-
-    "pause_before_ms": {
-      "description": "Silence inserted before this segment when assembling the chapter audio.",
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 60000,
-      "default": 0
-    },
-    "pause_after_ms": {
-      "description": "Silence inserted after this segment when assembling the chapter audio.",
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 60000,
-      "default": 0
-    },
-
-    "sample_rate": {
-      "description": "Output sample rate (Hz). Usually supplied globally; per-segment override allowed.",
-      "type": "integer",
-      "minimum": 8000,
-      "maximum": 192000
-    },
-    "audio_format": {
-      "description": "Output audio format.",
-      "type": "string",
-      "enum": ["wav", "pcm"]
-    },
-    "return_timestamps": {
-      "description": "If true, include timestamps (if supported) in per-segment outputs (renderer may write sidecar JSON).",
-      "type": "boolean",
-      "default": false
-    },
-
     "metadata": {
       "description": "Free-form metadata for upstream/downstream tooling (not used by TTS).",
       "type": "object",
@@ -127,15 +73,18 @@
 
   "allOf": [
     {
-      "description": "If emo_vector is present, it should take precedence; schema just ensures it's well-formed.",
-      "if": { "required": ["emo_vector"] },
-      "then": {}
+      "description": "Disallow mixing emo_vector and emo_text: pick one low-level override style (or neither).",
+      "not": {
+        "allOf": [
+          { "required": ["emo_vector"] },
+          { "required": ["emo_text"] }
+        ]
+      }
     },
     {
-      "description": "Encourage at least one speaker source (voice or spk_audio_prompt) but don't require it to preserve legacy defaults.",
-      "if": { "not": { "required": ["spk_audio_prompt"] } },
+      "description": "If emotion preset is omitted, renderer should default to neutral.",
+      "if": { "not": { "required": ["emotion"] } },
       "then": {}
     }
   ]
 }
-

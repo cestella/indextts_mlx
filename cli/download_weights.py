@@ -79,9 +79,7 @@ def _process_weight_norm(state: dict) -> dict:
 
     for name, arr in state.items():
         if not (name.endswith(".weight_v") or name.endswith(".weight_g")):
-            base = name.rsplit(".", 1)[0] if "." in name else name
-            if base not in pairs:
-                processed[name] = arr
+            processed[name] = arr
 
     return processed
 
