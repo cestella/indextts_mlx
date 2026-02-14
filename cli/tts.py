@@ -24,7 +24,9 @@ def _build_config(weights_dir, bpe_model):
 
 
 def _effective_emo_alpha(emo_alpha, emo_vector, emo_text, emo_audio_prompt):
-    """If no emo source is set, emo_alpha is irrelevant but harmless at 0.0."""
+    """Auto-set emo_alpha=1.0 when emo_audio_prompt is provided and the user left it at 0."""
+    if emo_audio_prompt is not None and emo_alpha == 0.0:
+        return 1.0
     return emo_alpha
 
 
@@ -203,6 +205,9 @@ def main(
             parsed_emo_vector = parse_emo_vector(emo_vector)
         except ValueError as e:
             raise click.BadParameter(str(e), param_hint="--emo-vector")
+
+    # ── Auto-set emo_alpha when emo_audio_prompt given without explicit alpha ──
+    emo_alpha = _effective_emo_alpha(emo_alpha, parsed_emo_vector, emo_text, emo_audio_prompt)
 
     # ── Verbose settings summary ──────────────────────────────────────────────
     if verbose:

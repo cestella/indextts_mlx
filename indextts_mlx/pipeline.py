@@ -128,6 +128,22 @@ class IndexTTS2:
         self.bigvgan = load_bigvgan_model(self.bigvgan, str(config.bigvgan))
         self.bigvgan.eval()
 
+        # Qwen emotion model — lazy-loaded on first use of emo_text
+        self._qwen_emo = None
+        self._qwen_emo_path = config.qwen_emo
+
+        # Load emotion/speaker matrices (optional — enables emo_vector support)
+        self._emo_matrix = None   # (8 groups of varying sizes, each row 1280-dim)
+        self._spk_matrix = None   # (8 groups of varying sizes, each row 192-dim)
+        self._emo_num = [3, 17, 2, 8, 4, 5, 10, 24]  # per IndexTTS-2 config.yaml
+        if config.emotion_matrix.exists() and config.speaker_matrix.exists():
+            _em = np.load(str(config.emotion_matrix))['matrix']  # (73, 1280)
+            _sm = np.load(str(config.speaker_matrix))['matrix']  # (73, 192)
+            # Split into 8 per-category groups
+            _offsets = [0] + list(np.cumsum(self._emo_num))
+            self._emo_matrix = [_em[_offsets[i]:_offsets[i+1]] for i in range(8)]
+            self._spk_matrix = [_sm[_offsets[i]:_offsets[i+1]] for i in range(8)]
+
     def _load_audio(self, reference_audio, sample_rate=None):
         """Load and resample reference audio to 16kHz and 22kHz."""
         if isinstance(reference_audio, (str, Path)):
@@ -143,6 +159,64 @@ class IndexTTS2:
         audio_16k = librosa.resample(audio, orig_sr=sr, target_sr=16000).astype(np.float32)[:15*16000]
         audio_22k = librosa.resample(audio, orig_sr=sr, target_sr=22050).astype(np.float32)[:15*22050]
         return audio_16k, audio_22k
+
+    def _get_qwen_emo(self):
+        """Lazy-load QwenEmotion on first use."""
+        if self._qwen_emo is None:
+            if not self._qwen_emo_path.exists():
+                raise FileNotFoundError(
+                    f"Qwen emotion model not found at '{self._qwen_emo_path}'. "
+                    "Set INDEXTTS_MLX_QWEN_EMO or pass qwen_emo= to WeightsConfig."
+                )
+            from .models.qwen_emo import QwenEmotion
+            self._qwen_emo = QwenEmotion(self._qwen_emo_path)
+        return self._qwen_emo
+
+    def _compute_w2vbert_features(self, audio_16k: np.ndarray) -> mx.array:
+        """Extract W2V-BERT semantic features (1, T, 1024) from 16 kHz audio."""
+        feats_np = compute_seamless_fbank(audio_16k)
+        mlx_feats = mx.array(feats_np[None])
+        T_feat = feats_np.shape[0]
+        mask = mx.ones((1, T_feat), dtype=mx.int32)
+        out = self.w2vbert(input_features=mlx_feats, attention_mask=mask, output_hidden_states=True)
+        return (out.hidden_states[17] - self.semantic_mean) / self.semantic_std  # (1, T, 1024)
+
+    def _compute_emo_vec_from_vector(
+        self,
+        emo_vector: List[float],
+        speaker_style: mx.array,
+        audio_emovec: mx.array,
+    ) -> mx.array:
+        """Compute emotion conditioning from an 8-float emo_vector + speaker style.
+
+        Matches PyTorch infer_v2.py logic:
+          1. For each of the 8 emotion categories, find the row in spk_matrix most
+             similar (cosine) to speaker_style, then pick that row from emo_matrix.
+          2. Weighted sum: emovec_mat = sum(emo_vector[i] * emo_matrix_row[i])
+          3. Blend:        out = emovec_mat + (1 - sum(emo_vector)) * audio_emovec
+        """
+        if self._emo_matrix is None:
+            raise RuntimeError(
+                "emotion_matrix.npz / speaker_matrix.npz not found in weights_dir. "
+                "emo_vector requires these files."
+            )
+        spk_np = np.array(speaker_style).squeeze()  # (192,)
+        # Find best row per category
+        selected_rows = []
+        for i in range(8):
+            sm_group = self._spk_matrix[i]  # (n_i, 192)
+            # cosine similarity
+            norms = np.linalg.norm(sm_group, axis=1, keepdims=True)
+            norms_q = np.linalg.norm(spk_np)
+            sims = sm_group @ spk_np / (norms.squeeze() * norms_q + 1e-8)
+            best_idx = int(np.argmax(sims))
+            selected_rows.append(self._emo_matrix[i][best_idx])  # (1280,)
+        emo_mat = np.stack(selected_rows, axis=0)  # (8, 1280)
+        weight_vec = np.array(emo_vector, dtype=np.float32)  # (8,)
+        emovec_mat = (weight_vec[:, None] * emo_mat).sum(axis=0)  # (1280,)
+        emovec_mat_mx = mx.array(emovec_mat[None])  # (1, 1280)
+        residual = float(1.0 - weight_vec.sum())
+        return emovec_mat_mx + residual * audio_emovec  # (1, 1280)
 
     def synthesize(
         self,
@@ -277,8 +351,38 @@ class IndexTTS2:
         prompt_condition, _ = self.s2mel.regulator(S_ref, ylens=ref_target_lengths, f0=None)
         mx.eval(prompt_condition)
 
-        # 4a. GPT conditioning (with emotion scaling)
-        cond_latents_34 = self.gpt.get_full_conditioning_34(semantic_features, emotion_scale=emotion)
+        # 4a. Compute emo_vec override (if any emo source is active)
+        # semantic_features (already computed above) are the W2V-BERT 1024-dim features
+        # that the emo_conditioning_encoder / get_emo_conditioning expects as input.
+        emo_vec_override = None
+        _use_emo_text = use_emo_text and emo_text is not None
+        if emo_vector is not None or emo_audio_prompt is not None or _use_emo_text:
+            # Base emovec from speaker semantic features (same as internal default)
+            audio_emovec = self.gpt.get_emo_conditioning(semantic_features)  # (1, 1280)
+
+            if _use_emo_text:
+                # emo_text path: run Qwen classifier → 8-float vector → emo_vector path
+                qwen = self._get_qwen_emo()
+                emo_vector = qwen.inference(emo_text)
+
+            if emo_vector is not None:
+                # emo_vector path: lookup emo_matrix per category, weighted sum, blend
+                emo_vec_override = self._compute_emo_vec_from_vector(
+                    emo_vector, speaker_style, audio_emovec
+                )
+            elif emo_audio_prompt is not None:
+                # emo_audio_prompt path: merge speaker base vec and emo audio vec with alpha
+                emo_audio_16k, _ = self._load_audio(emo_audio_prompt)
+                emo_sem = self._compute_w2vbert_features(emo_audio_16k)  # (1, T, 1024)
+                emo_emovec = self.gpt.get_emo_conditioning(emo_sem)       # (1, 1280)
+                # merge: base + alpha * (emo - base)
+                emo_vec_override = audio_emovec + emo_alpha * (emo_emovec - audio_emovec)
+            mx.eval(emo_vec_override)
+
+        # 4b. GPT conditioning (with emotion scaling and optional emo_vec override)
+        cond_latents_34 = self.gpt.get_full_conditioning_34(
+            semantic_features, emotion_scale=emotion, emo_vec_override=emo_vec_override
+        )
         inputs_embeds, _ = self.gpt.prepare_inputs(cond_latents_34, text_tokens)
         mx.eval(cond_latents_34, inputs_embeds)
 

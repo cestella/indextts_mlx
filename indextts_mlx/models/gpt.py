@@ -207,6 +207,7 @@ class UnifiedVoice(nn.Module):
         mel_lengths: Optional[mx.array] = None,
         speed: int = 0,
         emotion_scale: float = 1.0,
+        emo_vec_override: Optional[mx.array] = None,
     ) -> mx.array:
         """Compute the full 34-latent conditioning used by inference.
 
@@ -226,8 +227,11 @@ class UnifiedVoice(nn.Module):
         # 32 base latents
         cond_32 = self.get_conditioning(mel, mel_lengths)  # (B, 32, 1280)
 
-        # Emotion vector
-        emo_vec = self.get_emo_conditioning(mel, mel_lengths)  # (B, 1280)
+        # Emotion vector (use override if provided, otherwise derive from mel)
+        if emo_vec_override is not None:
+            emo_vec = emo_vec_override  # (B, 1280)
+        else:
+            emo_vec = self.get_emo_conditioning(mel, mel_lengths)  # (B, 1280)
 
         # Combine: speech_conditioning_latent + emo_vec
         cond_with_emo = cond_32 + emotion_scale * emo_vec[:, None, :]  # (B, 32, 1280)

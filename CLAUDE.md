@@ -154,10 +154,12 @@ Default directory: `~/code/index-tts-m3-port/prototypes/s2mel_mlx/mlx_weights/`
 ```
 bigvgan.npz
 campplus.npz
+emotion_matrix.npz   ← optional; enables emo_vector
 gpt.npz
 s2mel_pytorch.npz
 semantic_codec.npz
 semantic_stats.npz
+speaker_matrix.npz   ← optional; required alongside emotion_matrix.npz
 w2vbert.npz
 ```
 
@@ -260,6 +262,20 @@ The NPZ has `length_regulator.embedding.weight` and `length_regulator.mask_token
 ### Emotion parameter
 
 `emotion` (float 0–2) is passed as `emotion_scale` into `UnifiedVoice.get_full_conditioning_34()`. Internally: `cond_with_emo = cond_32 + emotion_scale * emo_vec[:, None, :]`. 0.0 = the base conditioning only; 1.0 = default blend; values above 1.0 amplify the emotion vector.
+
+### emo_vector and emo_matrix
+
+`emo_vector` (8 floats: happy, angry, sad, afraid, disgusted, melancholic, surprised, calm) maps to the `emotion_matrix.npz` / `speaker_matrix.npz` files in the weights directory. Both files have 73 rows split by `emo_num = [3,17,2,8,4,5,10,24]` into 8 per-category groups.
+
+Pipeline:
+1. For each category, find the row in `speaker_matrix` (192-dim) most cosine-similar to the speaker's CAMPPlus style embedding.
+2. Pick the corresponding row from `emotion_matrix` (1280-dim).
+3. Weighted sum: `emovec_mat = sum(emo_vector[i] * emo_matrix_row[i])`
+4. Blend with audio-derived emovec: `final = emovec_mat + (1 - sum(emo_vector)) * audio_emovec`
+
+`emo_alpha` is used with `emo_audio_prompt`: `final = base_emovec + alpha * (emo_emovec - base_emovec)` (interpolation between speaker's own emovec and reference emotion audio emovec).
+
+`emo_text` / `use_emo_text` are accepted as API parameters but not yet wired into computation (future work: requires text-to-emovec encoder).
 
 ### GPT generation loop
 

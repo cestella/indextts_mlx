@@ -9,6 +9,7 @@ description = "IndexTTS-2 TTS inference on Apple Silicon via MLX"
 requires-python = ">=3.10"
 dependencies = [
     "mlx>=0.21",
+    "mlx-lm>=0.20",
     "numpy",
     "soundfile",
     "librosa",
