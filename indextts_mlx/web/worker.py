@@ -110,86 +110,105 @@ class Worker(threading.Thread):
         status_dir = job_dir / ".status"
         status_dir.mkdir(exist_ok=True)
 
+        # start_stage controls which pipeline stages are skipped.
+        # A resume job sets this to "extracting", "synthesizing", or "packaging".
+        # A normal job has no start_stage (or "downloading").
+        _STAGE_ORDER = ["downloading", "extracting", "synthesizing", "packaging"]
+        start_stage = job.get("start_stage") or "downloading"
+        def _should_skip(stage: str) -> bool:
+            try:
+                return _STAGE_ORDER.index(stage) < _STAGE_ORDER.index(start_stage)
+            except ValueError:
+                return False
+
         # ── 1. Download epub ─────────────────────────────────────────────────
-        if self._is_cancelled(jid):
-            return
-        self.queue.update(
-            jid, stage="downloading", epub_path=str(epub_path.relative_to(self.audiobooks_dir))
-        )
-        self._run_proc(
-            jid,
-            ["wget", "-q", "-O", str(epub_path), job["epub_url"]],
-            stage="downloading",
-        )
-        if not epub_path.exists() or epub_path.stat().st_size == 0:
-            raise RuntimeError(f"Download failed or file is empty: {epub_path}")
+        if not _should_skip("downloading"):
+            if self._is_cancelled(jid):
+                return
+            self.queue.update(
+                jid, stage="downloading", epub_path=str(epub_path.relative_to(self.audiobooks_dir))
+            )
+            self._run_proc(
+                jid,
+                ["wget", "-q", "-O", str(epub_path), job["epub_url"]],
+                stage="downloading",
+            )
+            if not epub_path.exists() or epub_path.stat().st_size == 0:
+                raise RuntimeError(f"Download failed or file is empty: {epub_path}")
 
         # ── 2. Extract epub chapters → txt ───────────────────────────────────
-        if self._is_cancelled(jid):
-            return
-        self.queue.update(jid, stage="extracting")
-        self._run_proc(
-            jid,
-            [cmd, "extract", str(epub_path), str(chapters_txt)],
-            stage="extracting",
-        )
+        if not _should_skip("extracting"):
+            if self._is_cancelled(jid):
+                return
+            self.queue.update(jid, stage="extracting")
+            self._run_proc(
+                jid,
+                [cmd, "extract", str(epub_path), str(chapters_txt)],
+                stage="extracting",
+            )
 
-        # Read metadata written by extract (title/author from epub)
-        self._try_read_title(jid, epub_path)
+        # Best-effort: read title/author from epub if present
+        if epub_path.exists():
+            self._try_read_title(jid, epub_path)
 
         # ── 3. Synthesize chapters → mp3 ─────────────────────────────────────
-        if self._is_cancelled(jid):
-            return
-        self.queue.update(jid, stage="synthesizing")
-
-        synth_cmd = [
-            cmd,
-            "synthesize",
-            "--file",
-            str(chapters_txt),
-            "--out",
-            str(chapters_mp3),
-            "--out-ext",
-            "mp3",
-            "--status",
-            str(status_dir),
-            "--steps",
-            str(job["steps"]),
-            "--temperature",
-            str(job["temperature"]),
-            "--emotion",
-            str(job["emotion"]),
-            "--cfg-rate",
-            str(job["cfg_rate"]),
-            "--token-target",
-            str(job["token_target"]),
-        ]
-        voice = job.get("voice") or self.default_voice
-        if voice and self.voices_dir:
-            synth_cmd += ["--voices-dir", self.voices_dir, "--voice", voice]
-        elif voice:
-            synth_cmd += ["--spk-audio-prompt", voice]
-
-        self._run_proc(jid, synth_cmd, stage="synthesizing")
+        if not _should_skip("synthesizing"):
+            if self._is_cancelled(jid):
+                return
+            # Clear any stale synth_status.json from a previous run so the UI
+            # doesn't show outdated progress while the new run starts up.
+            stale = status_dir / "synth_status.json"
+            if stale.exists():
+                stale.unlink(missing_ok=True)
+            self.queue.update(jid, stage="synthesizing")
+            synth_cmd = [
+                cmd,
+                "synthesize",
+                "--file",
+                str(chapters_txt),
+                "--out",
+                str(chapters_mp3),
+                "--out-ext",
+                "mp3",
+                "--status",
+                str(status_dir),
+                "--steps",
+                str(job["steps"]),
+                "--temperature",
+                str(job["temperature"]),
+                "--emotion",
+                str(job["emotion"]),
+                "--cfg-rate",
+                str(job["cfg_rate"]),
+                "--token-target",
+                str(job["token_target"]),
+            ]
+            voice = job.get("voice") or self.default_voice
+            if voice and self.voices_dir:
+                synth_cmd += ["--voices-dir", self.voices_dir, "--voice", voice]
+            elif voice:
+                synth_cmd += ["--spk-audio-prompt", voice]
+            self._run_proc(jid, synth_cmd, stage="synthesizing")
 
         # ── 4. Package m4b ───────────────────────────────────────────────────
-        if self._is_cancelled(jid):
-            return
-        self.queue.update(jid, stage="packaging")
-        self._run_proc(
-            jid,
-            [
-                cmd,
-                "m4b",
-                "--chapters-dir",
-                str(chapters_mp3),
-                "--out",
-                str(job_dir),
-                "--isbn",
-                isbn,
-            ],
-            stage="packaging",
-        )
+        if not _should_skip("packaging"):
+            if self._is_cancelled(jid):
+                return
+            self.queue.update(jid, stage="packaging")
+            self._run_proc(
+                jid,
+                [
+                    cmd,
+                    "m4b",
+                    "--chapters-dir",
+                    str(chapters_mp3),
+                    "--out",
+                    str(job_dir),
+                    "--isbn",
+                    isbn,
+                ],
+                stage="packaging",
+            )
 
         # Find the produced m4b
         m4b_files = list(job_dir.glob("*.m4b"))

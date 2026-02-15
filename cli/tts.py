@@ -61,6 +61,7 @@ def _write_synth_status(
     total_chunks: int,
     file_wall_times: list,
     chunk_wall_times: list,
+    chunk_audio_times: list | None = None,
 ) -> None:
     """Atomically write a JSON status snapshot for the web UI to poll."""
     import json as _json
@@ -70,15 +71,18 @@ def _write_synth_status(
     chunks_left = total_chunks - chunk_index
     files_left = total_files - file_index - (1 if file_done else 0)
     chunk_eta = mean_chunk * chunks_left if mean_chunk else None
-    file_eta = (
-        (chunk_eta or 0) + (mean_file * files_left if mean_file else 0)
-        if mean_chunk or mean_file
-        else None
-    )
-    all_chunk_times = list(file_wall_times) + list(chunk_wall_times)
-    avg_rtf = None
-    if all_chunk_times:
-        avg_rtf = round(sum(all_chunk_times) / len(all_chunk_times), 3)
+    # Job ETA requires at least one completed file to estimate per-file cost.
+    # Until then it's unknown — don't conflate it with chunk ETA.
+    job_eta = mean_file * files_left if (mean_file and files_left > 0) else None
+    if job_eta is not None and chunk_eta is not None:
+        job_eta += chunk_eta  # add remaining time for the current in-progress file
+    # Real-time factor: audio seconds produced per wall second (higher = faster than real-time)
+    rtf = None
+    if chunk_audio_times and chunk_wall_times:
+        total_audio = sum(chunk_audio_times)
+        total_wall = sum(chunk_wall_times)
+        if total_wall > 0:
+            rtf = round(total_audio / total_wall, 2)
     data = {
         "file_index": file_index,
         "total_files": total_files,
@@ -89,8 +93,9 @@ def _write_synth_status(
         "chunks_remaining": chunks_left,
         "files_remaining": files_left,
         "chunk_eta_s": round(chunk_eta, 1) if chunk_eta is not None else None,
-        "job_eta_s": round(file_eta, 1) if file_eta is not None else None,
+        "job_eta_s": round(job_eta, 1) if job_eta is not None else None,
         "avg_wall_s_per_chunk": round(mean_chunk, 2) if mean_chunk else None,
+        "rtf": rtf,
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
     tmp = status_path.with_suffix(".tmp")
@@ -662,6 +667,7 @@ def synthesize(
                 )
 
                 _chunk_wall_times: list[float] = []
+                _chunk_audio_times: list[float] = []
 
                 if verbose:
                     _on_chunk, _on_chunk_done_base = _make_verbose_callbacks()
@@ -702,6 +708,7 @@ def synthesize(
 
                 def _on_chunk_done(i, total, stats, _fi=_cur_file_idx, _fn=_cur_inp_name):
                     _chunk_wall_times.append(stats["wall_time_s"])
+                    _chunk_audio_times.append(stats["audio_duration_s"])
                     _on_chunk_done_base(i, total, stats)
                     if _status_path:
                         _write_synth_status(
@@ -714,6 +721,7 @@ def synthesize(
                             total,
                             _file_wall_times,
                             _chunk_wall_times,
+                            _chunk_audio_times,
                         )
 
                 audio = synthesize_long(
@@ -782,6 +790,7 @@ def synthesize(
                         len(_chunk_wall_times),
                         _file_wall_times,
                         _chunk_wall_times,
+                        _chunk_audio_times,
                     )
                 click.echo(
                     f"  Saved {len(audio)/sample_rate:.2f}s → {out_file}"

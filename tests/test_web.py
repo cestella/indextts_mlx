@@ -341,6 +341,7 @@ class TestWriteSynthStatus:
             total_chunks=12,
             file_wall_times=[7.0, 7.2, 6.8],
             chunk_wall_times=[6.5, 7.1, 6.9, 7.0, 7.3],
+            chunk_audio_times=[10.0, 10.5, 10.2, 10.1, 10.3],
         )
         assert p.exists()
         data = json.loads(p.read_text())
@@ -354,6 +355,8 @@ class TestWriteSynthStatus:
         assert data["files_remaining"] == 8  # total - index - (not done)
         assert data["chunk_eta_s"] is not None
         assert data["job_eta_s"] is not None
+        assert data["rtf"] is not None
+        assert data["rtf"] > 0
         assert "updated_at" in data
 
     def test_eta_none_when_no_timing(self, tmp_path):
@@ -364,6 +367,33 @@ class TestWriteSynthStatus:
         data = json.loads(p.read_text())
         assert data["chunk_eta_s"] is None
         assert data["job_eta_s"] is None
+        assert data["rtf"] is None
+
+    def test_job_eta_none_before_first_file_done(self, tmp_path):
+        """Job ETA must be None until at least one file is complete."""
+        from cli.tts import _write_synth_status
+
+        p = tmp_path / "synth_status.json"
+        # First file in progress, no completed files yet
+        _write_synth_status(
+            p, 0, 5, "ch01.txt", False, 3, 10, [], [7.0, 6.8, 7.2],
+            chunk_audio_times=[10.0, 10.2, 9.8],
+        )
+        data = json.loads(p.read_text())
+        assert data["chunk_eta_s"] is not None   # chunk ETA works immediately
+        assert data["job_eta_s"] is None          # job ETA needs a completed file
+
+    def test_job_eta_available_after_first_file(self, tmp_path):
+        """Job ETA should be non-None once file_wall_times has an entry."""
+        from cli.tts import _write_synth_status
+
+        p = tmp_path / "synth_status.json"
+        _write_synth_status(
+            p, 1, 5, "ch02.txt", False, 2, 8, [45.0], [7.0, 6.8],
+            chunk_audio_times=[10.0, 10.2],
+        )
+        data = json.loads(p.read_text())
+        assert data["job_eta_s"] is not None
 
     def test_file_done_reduces_files_remaining(self, tmp_path):
         from cli.tts import _write_synth_status
@@ -374,6 +404,18 @@ class TestWriteSynthStatus:
         # file_done=True means this file is counted as done → files_remaining = 10 - 3 - 1 = 6
         assert data["files_remaining"] == 6
 
+    def test_rtf_computed_correctly(self, tmp_path):
+        from cli.tts import _write_synth_status
+
+        p = tmp_path / "synth_status.json"
+        # 2 chunks: 20s audio in 4s wall → RTF = 5.0
+        _write_synth_status(
+            p, 0, 3, "ch01.txt", False, 2, 10, [], [2.0, 2.0],
+            chunk_audio_times=[10.0, 10.0],
+        )
+        data = json.loads(p.read_text())
+        assert data["rtf"] == 5.0
+
     def test_atomic_write(self, tmp_path):
         """Verify tmp-then-rename: status file is always fully formed."""
         from cli.tts import _write_synth_status
@@ -383,3 +425,209 @@ class TestWriteSynthStatus:
             _write_synth_status(p, i, 20, f"ch{i:02d}.txt", False, 0, 5, [], [])
         data = json.loads(p.read_text())
         assert data["file_index"] == 19  # last write wins
+
+
+# ── scan_dirs / _detect_stage ─────────────────────────────────────────────────
+
+
+def _make_dir(base: Path, name: str) -> Path:
+    d = base / name
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+class TestScanDirs:
+    def test_empty_audiobooks_dir(self, tmp_ab_dir):
+        from indextts_mlx.web.queue_manager import QueueManager
+
+        q = QueueManager(tmp_ab_dir)
+        assert q.scan_dirs() == []
+
+    def test_hidden_dirs_ignored(self, tmp_ab_dir):
+        from indextts_mlx.web.queue_manager import QueueManager
+
+        _make_dir(tmp_ab_dir, ".hidden")
+        q = QueueManager(tmp_ab_dir)
+        assert q.scan_dirs() == []
+
+    def test_empty_subdir_not_returned(self, tmp_ab_dir):
+        from indextts_mlx.web.queue_manager import QueueManager
+
+        _make_dir(tmp_ab_dir, "0743273565")
+        q = QueueManager(tmp_ab_dir)
+        assert q.scan_dirs() == []
+
+    def test_epub_only_returns_extracting(self, tmp_ab_dir):
+        from indextts_mlx.web.queue_manager import QueueManager
+
+        d = _make_dir(tmp_ab_dir, "0743273565")
+        (d / "0743273565.epub").write_bytes(b"fake")
+        q = QueueManager(tmp_ab_dir)
+        results = q.scan_dirs()
+        assert len(results) == 1
+        assert results[0]["start_stage"] == "extracting"
+        assert results[0]["dir_name"] == "0743273565"
+
+    def test_txt_only_returns_synthesizing(self, tmp_ab_dir):
+        from indextts_mlx.web.queue_manager import QueueManager
+
+        d = _make_dir(tmp_ab_dir, "0743273565")
+        txt = d / "chapters_txt"
+        txt.mkdir()
+        (txt / "ch01.txt").write_text("hello")
+        q = QueueManager(tmp_ab_dir)
+        results = q.scan_dirs()
+        assert results[0]["start_stage"] == "synthesizing"
+
+    def test_partial_mp3s_returns_synthesizing(self, tmp_ab_dir):
+        from indextts_mlx.web.queue_manager import QueueManager
+
+        d = _make_dir(tmp_ab_dir, "0743273565")
+        txt = d / "chapters_txt"
+        txt.mkdir()
+        mp3 = d / "chapters_mp3"
+        mp3.mkdir()
+        for i in range(5):
+            (txt / f"ch{i:02d}.txt").write_text("x")
+        for i in range(3):
+            (mp3 / f"ch{i:02d}.mp3").write_bytes(b"x")
+        q = QueueManager(tmp_ab_dir)
+        results = q.scan_dirs()
+        assert results[0]["start_stage"] == "synthesizing"
+
+    def test_all_mp3s_returns_packaging(self, tmp_ab_dir):
+        from indextts_mlx.web.queue_manager import QueueManager
+
+        d = _make_dir(tmp_ab_dir, "0743273565")
+        txt = d / "chapters_txt"
+        txt.mkdir()
+        mp3 = d / "chapters_mp3"
+        mp3.mkdir()
+        for i in range(4):
+            (txt / f"ch{i:02d}.txt").write_text("x")
+            (mp3 / f"ch{i:02d}.mp3").write_bytes(b"x")
+        q = QueueManager(tmp_ab_dir)
+        results = q.scan_dirs()
+        assert results[0]["start_stage"] == "packaging"
+
+    def test_m4b_already_done_not_returned(self, tmp_ab_dir):
+        from indextts_mlx.web.queue_manager import QueueManager
+
+        d = _make_dir(tmp_ab_dir, "0743273565")
+        (d / "book.m4b").write_bytes(b"x")
+        q = QueueManager(tmp_ab_dir)
+        assert q.scan_dirs() == []
+
+    def test_already_queued_dir_excluded(self, tmp_ab_dir):
+        from indextts_mlx.web.queue_manager import QueueManager
+
+        d = _make_dir(tmp_ab_dir, "0743273565")
+        txt = d / "chapters_txt"
+        txt.mkdir()
+        (txt / "ch01.txt").write_text("x")
+        q = QueueManager(tmp_ab_dir)
+        q.submit(isbn="0743273565", epub_url="https://x.com/a.epub", voice=None)
+        assert q.scan_dirs() == []
+
+    def test_done_job_dir_reappears_in_scan(self, tmp_ab_dir):
+        """A dir whose queue entry is 'done' should show up in scan again."""
+        from indextts_mlx.web.queue_manager import QueueManager, DONE
+
+        d = _make_dir(tmp_ab_dir, "0743273565")
+        txt = d / "chapters_txt"
+        txt.mkdir()
+        (txt / "ch01.txt").write_text("x")
+        q = QueueManager(tmp_ab_dir)
+        job = q.submit(isbn="0743273565", epub_url="https://x.com/a.epub", voice=None)
+        q.update(job["id"], status=DONE)
+        # done jobs are excluded from tracking so dir should reappear
+        results = q.scan_dirs()
+        assert any(r["dir_name"] == "0743273565" for r in results)
+
+
+class TestResumeJob:
+    def test_resume_creates_queued_job(self, queue, tmp_ab_dir):
+        d = _make_dir(tmp_ab_dir, "mybook")
+        results = queue.resume(
+            dir_name="mybook",
+            isbn="mybook",
+            voice=None,
+            start_stage="synthesizing",
+        )
+        assert results["status"] == "queued"
+        assert results["start_stage"] == "synthesizing"
+        assert results["dir_name"] == "mybook"
+        assert results["epub_url"] is None
+
+    def test_resume_job_picked_up_by_get_next_queued(self, queue, tmp_ab_dir):
+        queue.resume(dir_name="mybook", isbn="mybook", voice=None, start_stage="packaging")
+        nxt = queue.get_next_queued()
+        assert nxt is not None
+        assert nxt["start_stage"] == "packaging"
+
+
+class TestApiResume:
+    def test_api_resume_valid(self, client, tmp_ab_dir):
+        d = _make_dir(tmp_ab_dir, "mybook")
+        r = client.post(
+            "/api/resume",
+            json={"dir_name": "mybook", "isbn": "mybook", "start_stage": "synthesizing"},
+        )
+        assert r.status_code == 201
+        data = r.get_json()
+        assert data["job"]["start_stage"] == "synthesizing"
+        assert data["job"]["status"] == "queued"
+
+    def test_api_resume_missing_dir_name(self, client):
+        r = client.post("/api/resume", json={"isbn": "123"})
+        assert r.status_code == 400
+        assert "dir_name" in r.get_json()["error"]
+
+    def test_api_scan_returns_dirs(self, client, tmp_ab_dir):
+        d = _make_dir(tmp_ab_dir, "0743273565")
+        txt = d / "chapters_txt"
+        txt.mkdir()
+        (txt / "ch01.txt").write_text("x")
+        r = client.get("/api/scan")
+        assert r.status_code == 200
+        dirs = r.get_json()["dirs"]
+        assert any(e["dir_name"] == "0743273565" for e in dirs)
+
+    def test_api_scan_empty(self, client):
+        r = client.get("/api/scan")
+        assert r.status_code == 200
+        assert r.get_json()["dirs"] == []
+
+
+class TestApiLibrary:
+    def test_empty_library(self, client):
+        r = client.get("/api/library")
+        assert r.status_code == 200
+        assert r.get_json()["books"] == []
+
+    def test_m4b_files_returned(self, client, tmp_ab_dir):
+        d = tmp_ab_dir / "mybook"
+        d.mkdir()
+        (d / "mybook.m4b").write_bytes(b"x" * 1024)
+        r = client.get("/api/library")
+        assert r.status_code == 200
+        books = r.get_json()["books"]
+        assert len(books) == 1
+        assert books[0]["name"] == "mybook"
+        assert books[0]["size_bytes"] == 1024
+        assert "path" in books[0]
+        assert "modified_at" in books[0]
+
+    def test_non_m4b_files_excluded(self, client, tmp_ab_dir):
+        (tmp_ab_dir / "notes.txt").write_text("hello")
+        r = client.get("/api/library")
+        assert r.get_json()["books"] == []
+
+    def test_multiple_books_sorted(self, client, tmp_ab_dir):
+        for name in ["zbook", "abook"]:
+            d = tmp_ab_dir / name
+            d.mkdir()
+            (d / f"{name}.m4b").write_bytes(b"x")
+        books = client.get("/api/library").get_json()["books"]
+        names = [b["name"] for b in books]
+        assert names == sorted(names)

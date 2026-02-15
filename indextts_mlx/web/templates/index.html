@@ -227,6 +227,88 @@
     }
     .download-link:hover { background: var(--surface); }
 
+    /* ── detected dirs ────────────────────────────────────────────────────── */
+    .detected-item {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .detected-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+    }
+    .detected-icon { font-size: 1.1rem; flex-shrink: 0; }
+    .detected-info { flex: 1; min-width: 0; }
+    .detected-name { font-weight: 600; font-size: 0.9rem; }
+    .detected-desc { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; }
+    .btn-import { background: var(--surface); border: 1px solid var(--accent); color: var(--accent);
+      font-size: 0.8rem; padding: 6px 14px; flex-shrink: 0; }
+    .btn-import:hover { background: var(--accent); color: #fff; }
+    .btn-import.open { background: var(--accent); color: #fff; }
+    .resume-panel {
+      display: none;
+      padding: 14px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .resume-panel.open { display: block; }
+    .resume-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+      margin-bottom: 12px;
+    }
+    @media (min-width: 560px) { .resume-grid { grid-template-columns: 1fr 1fr 1fr 1fr; } }
+
+    /* ── tabs ─────────────────────────────────────────────────────────────── */
+    .tab-bar {
+      display: flex;
+      gap: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px;
+    }
+    .tab-btn {
+      flex: 1;
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-family: var(--font);
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 8px 14px;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { background: var(--surface2); color: var(--text); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: contents; }
+
+    /* ── library ──────────────────────────────────────────────────────────── */
+    .book-item {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .book-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 6px; }
+    .book-meta { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 10px; }
+    .book-links { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .copy-url-btn {
+      background: var(--surface); border: 1px solid var(--border); color: var(--text-dim);
+      font-family: var(--font); font-size: 0.75rem; padding: 5px 10px;
+      border-radius: 6px; cursor: pointer; transition: border-color 0.15s, color 0.15s;
+      display: inline-flex; align-items: center; gap: 5px;
+    }
+    .copy-url-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .copy-url-btn.copied { border-color: var(--green); color: var(--green); }
+
     /* ── empty states ─────────────────────────────────────────────────────── */
     .empty { color: var(--text-dim); font-size: 0.85rem; padding: 10px 0; }
 
@@ -252,6 +334,15 @@
   </header>
 
   <div class="container">
+
+    <!-- ── Tab bar ─────────────────────────────────────────────────────── -->
+    <div class="tab-bar">
+      <button class="tab-btn active" id="tab-queue-btn" onclick="switchTab('queue')">📋 Queue</button>
+      <button class="tab-btn" id="tab-library-btn" onclick="switchTab('library')">📚 Library</button>
+    </div>
+
+    <!-- ══ Queue tab ═══════════════════════════════════════════════════════ -->
+    <div class="tab-panel active" id="tab-queue">
 
     <!-- ── Submit form ─────────────────────────────────────────────────── -->
     <div class="card">
@@ -286,7 +377,7 @@
           </div>
           <div>
             <label for="token_target">Token target</label>
-            <input type="number" id="token_target" name="token_target" value="250" min="50" max="550">
+            <input type="number" id="token_target" name="token_target" value="50" min="50" max="550">
           </div>
         </div>
 
@@ -296,6 +387,12 @@
           </button>
         </div>
       </form>
+    </div>
+
+    <!-- ── Detected dirs ───────────────────────────────────────────────── -->
+    <div class="card" id="detected-card" style="display:none">
+      <div class="card-title">Detected Directories — click to resume</div>
+      <div class="job-list" id="detected-list"></div>
     </div>
 
     <!-- ── Active job ──────────────────────────────────────────────────── -->
@@ -319,6 +416,21 @@
         <div class="empty">No completed jobs.</div>
       </div>
     </div>
+
+    </div><!-- /tab-queue -->
+
+    <!-- ══ Library tab ════════════════════════════════════════════════════ -->
+    <div class="tab-panel" id="tab-library">
+      <div class="card">
+        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>M4B Library</span>
+          <button class="btn btn-sm" style="background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-size:0.75rem;" onclick="loadLibrary()">↺ Refresh</button>
+        </div>
+        <div class="job-list" id="library-list">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </div><!-- /tab-library -->
 
   </div><!-- /container -->
 
@@ -413,6 +525,205 @@
     }
   }
 
+  // ── tabs ─────────────────────────────────────────────────────────────────
+
+  let _activeTab = 'queue';
+
+  function switchTab(name) {
+    _activeTab = name;
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    document.getElementById('tab-' + name + '-btn').classList.add('active');
+    if (name === 'library') loadLibrary();
+  }
+
+  // ── library ──────────────────────────────────────────────────────────────
+
+  function fmtBytes(n) {
+    if (n == null) return '—';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+    return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  }
+
+  async function loadLibrary() {
+    const list = document.getElementById('library-list');
+    try {
+      const r = await fetch('/api/library');
+      const data = await r.json();
+      if (!data.books || !data.books.length) {
+        list.innerHTML = '<div class="empty">No M4B files found yet.</div>';
+        return;
+      }
+      list.innerHTML = data.books.map((b, i) => {
+        const downloadUrl = window.location.origin + '/files/' + encodeURIComponent(b.path).replace(/%2F/g, '/');
+        const uid = 'lib' + i;
+        return `
+          <div class="book-item">
+            <div class="book-title">${esc(b.name)}</div>
+            <div class="book-meta">${fmtBytes(b.size_bytes)} · ${fmtDate(b.modified_at)}</div>
+            <div class="book-links">
+              <a class="download-link" href="/files/${esc(b.path)}" download>⬇ Download</a>
+              <button class="copy-url-btn" id="cpbtn_${uid}"
+                onclick="copyUrl('${uid}', '${downloadUrl.replace(/'/g, "\\'")}')">
+                🔗 Copy URL
+              </button>
+              <span style="font-size:0.72rem;color:var(--text-dim);word-break:break-all;flex-basis:100%;margin-top:2px;"
+                id="url_${uid}">${esc(downloadUrl)}</span>
+            </div>
+          </div>`;
+      }).join('');
+    } catch(e) {
+      list.innerHTML = '<div class="empty">Failed to load library.</div>';
+    }
+  }
+
+  async function copyUrl(uid, url) {
+    try {
+      await navigator.clipboard.writeText(url);
+      const btn = document.getElementById('cpbtn_' + uid);
+      btn.textContent = '✓ Copied';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = '🔗 Copy URL'; btn.classList.remove('copied'); }, 2000);
+    } catch(e) {
+      toast('Copy failed — select the URL manually', true);
+    }
+  }
+
+  // ── scan / resume ────────────────────────────────────────────────────────
+
+  async function loadDetected() {
+    try {
+      const r = await fetch('/api/scan');
+      const data = await r.json();
+      const card = document.getElementById('detected-card');
+      const list = document.getElementById('detected-list');
+      if (!data.dirs || !data.dirs.length) {
+        card.style.display = 'none';
+        return;
+      }
+      card.style.display = '';
+      // Build voice options from global _voices list
+      const voiceOpts = ['<option value="">— default voice —</option>',
+        ..._voices.map(v => `<option value="${esc(v)}">${esc(v)}</option>`)
+      ].join('');
+      list.innerHTML = data.dirs.map((d, i) => {
+        const uid = 'rd_' + i;
+        return `
+        <div class="detected-item">
+          <div class="detected-row">
+            <div class="detected-icon">📂</div>
+            <div class="detected-info">
+              <div class="detected-name">${esc(d.dir_name)}</div>
+              <div class="detected-desc">${esc(d.description)}</div>
+            </div>
+            <button class="btn btn-import" id="btn_${uid}"
+              onclick="toggleResumePanel('${uid}')">
+              Resume
+            </button>
+          </div>
+          <div class="resume-panel" id="panel_${uid}">
+            <div class="resume-grid">
+              <div>
+                <label>Voice</label>
+                <select id="${uid}_voice">${voiceOpts}</select>
+              </div>
+              <div>
+                <label>CFM Steps</label>
+                <input type="number" id="${uid}_steps" value="10" min="1" max="50">
+              </div>
+              <div>
+                <label>Emotion (0–2)</label>
+                <input type="number" id="${uid}_emotion" value="1.0" step="0.1" min="0" max="2">
+              </div>
+              <div>
+                <label>Token target</label>
+                <input type="number" id="${uid}_token_target" value="50" min="50" max="550">
+              </div>
+            </div>
+            <button class="btn btn-primary btn-sm"
+              onclick='confirmResume(${JSON.stringify(d.dir_name)}, ${JSON.stringify(d.start_stage)}, "${uid}")'>
+              ▶ Queue resume from ${esc(d.start_stage)}
+            </button>
+          </div>
+        </div>`;
+      }).join('');
+    } catch(e) { /* silently ignore */ }
+  }
+
+  function toggleResumePanel(uid) {
+    const panel = document.getElementById('panel_' + uid);
+    const btn = document.getElementById('btn_' + uid);
+    const open = panel.classList.toggle('open');
+    btn.classList.toggle('open', open);
+  }
+
+  async function confirmResume(dirName, startStage, uid) {
+    const voice = document.getElementById(uid + '_voice').value;
+    const steps = parseInt(document.getElementById(uid + '_steps').value) || 10;
+    const emotion = parseFloat(document.getElementById(uid + '_emotion').value) || 1.0;
+    const tokenTarget = parseInt(document.getElementById(uid + '_token_target').value) || 50;
+    try {
+      const r = await fetch('/api/resume', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          dir_name: dirName,
+          isbn: dirName,
+          voice: voice || null,
+          start_stage: startStage,
+          steps, emotion, token_target: tokenTarget,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Resume failed');
+      toast('Resuming ' + dirName + ' from ' + startStage + ' ✓');
+      pollNow();
+      loadDetected();
+    } catch(err) {
+      toast(err.message, true);
+    }
+  }
+
+  // ── job resume panel ─────────────────────────────────────────────────────
+
+  function toggleJobResumePanel(uid) {
+    const panel = document.getElementById('rp_' + uid);
+    const btn = document.getElementById('rbtn_' + uid);
+    if (!panel) return;
+    const open = panel.classList.toggle('open');
+    btn.classList.toggle('open', open);
+  }
+
+  async function confirmJobResume(uid, dirName, isbn) {
+    const voice = document.getElementById(uid + '_voice').value;
+    const steps = parseInt(document.getElementById(uid + '_steps').value) || 10;
+    const emotion = parseFloat(document.getElementById(uid + '_emotion').value) || 1.0;
+    const tokenTarget = parseInt(document.getElementById(uid + '_token_target').value) || 50;
+    try {
+      const r = await fetch('/api/resume', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          dir_name: dirName,
+          isbn: isbn,
+          voice: voice || null,
+          // start_stage omitted — backend will auto-detect from directory
+          steps, emotion, token_target: tokenTarget,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Resume failed');
+      toast('Resuming ' + dirName + ' ✓');
+      pollNow();
+      loadDetected();
+    } catch(err) {
+      toast(err.message, true);
+    }
+  }
+
   // ── render helpers ───────────────────────────────────────────────────────
 
   function renderStageBadge(stage) {
@@ -451,6 +762,10 @@
             <div class="progress-bar" style="width:${chunkPct}%"></div>
           </div>
         </div>`;
+      const jobEtaVal = synth.job_eta_s != null ? fmtEta(synth.job_eta_s) : 'Pending';
+      const jobEtaClass = synth.job_eta_s != null ? 'accent' : 'stat-value' ;
+      const rtfVal = synth.rtf != null ? synth.rtf.toFixed(2) + 'x' : '—';
+      const rtfClass = synth.rtf != null && synth.rtf >= 1 ? 'green' : 'yellow';
       statsHTML = `
         <div class="stat-grid">
           <div class="stat-box">
@@ -459,15 +774,15 @@
           </div>
           <div class="stat-box">
             <div class="stat-label">Job ETA</div>
-            <div class="stat-value accent">${fmtEta(synth.job_eta_s)}</div>
+            <div class="stat-value ${synth.job_eta_s != null ? 'accent' : ''}">${jobEtaVal}</div>
           </div>
           <div class="stat-box">
             <div class="stat-label">Files left</div>
             <div class="stat-value yellow">${synth.files_remaining ?? '—'}</div>
           </div>
           <div class="stat-box">
-            <div class="stat-label">s/chunk avg</div>
-            <div class="stat-value">${synth.avg_wall_s_per_chunk != null ? synth.avg_wall_s_per_chunk.toFixed(1) + 's' : '—'}</div>
+            <div class="stat-label">Realtime</div>
+            <div class="stat-value ${rtfClass}">${rtfVal}</div>
           </div>
         </div>`;
     } else if (job.stage === 'downloading') {
@@ -501,13 +816,17 @@
     return 'job-status-text status-' + status;
   }
 
-  function renderJobItem(job) {
+  function renderJobItem(job, uid) {
     const title = job.title ? esc(job.title) : `ISBN ${esc(job.isbn)}`;
     const by = job.author ? ` · ${esc(job.author)}` : '';
     const date = fmtDate(job.created_at);
     const canCancel = job.status === 'queued' || job.status === 'running';
+    const canResume = job.status === 'interrupted' || job.status === 'failed';
     const cancelBtn = canCancel
       ? `<button class="btn btn-danger btn-sm" onclick="cancelJob('${esc(job.id)}')">Cancel</button>`
+      : '';
+    const resumeBtn = canResume
+      ? `<button class="btn btn-import btn-sm" id="rbtn_${uid}" onclick="toggleJobResumePanel('${uid}')">Resume</button>`
       : '';
     const m4bLink = job.m4b_path
       ? `<a class="download-link" href="/files/${esc(job.m4b_path)}" download>⬇ M4B</a>`
@@ -518,8 +837,9 @@
     const errNote = job.error
       ? `<div style="font-size:0.7rem;color:var(--red);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${esc(job.error)}">${esc(job.error.split('\n')[0])}</div>`
       : '';
-    return `
-      <div class="job-item">
+
+    const row = `
+      <div class="job-item" style="${canResume ? 'border-radius:0;border-bottom:none;' : ''}">
         <div class="${dotClass(job.status)}"></div>
         <div class="job-info">
           <div class="job-isbn">${title}${by}</div>
@@ -529,15 +849,51 @@
         <div class="job-actions">
           ${m4bLink}${epubLink}
           <span class="${statusClass(job.status)}">${esc(job.status)}</span>
-          ${cancelBtn}
+          ${cancelBtn}${resumeBtn}
         </div>
       </div>`;
+
+    if (!canResume) return row;
+
+    // Build voice options
+    const voiceOpts = ['<option value="">— default voice —</option>',
+      ..._voices.map(v => `<option value="${esc(v)}"${job.voice===v?' selected':''}>${esc(v)}</option>`)
+    ].join('');
+
+    const panel = `
+      <div class="resume-panel" id="rp_${uid}" style="border-radius:0 0 8px 8px;border:1px solid var(--border);border-top:none;">
+        <div class="resume-grid">
+          <div>
+            <label>Voice</label>
+            <select id="${uid}_voice">${voiceOpts}</select>
+          </div>
+          <div>
+            <label>CFM Steps</label>
+            <input type="number" id="${uid}_steps" value="${job.steps ?? 10}" min="1" max="50">
+          </div>
+          <div>
+            <label>Emotion (0–2)</label>
+            <input type="number" id="${uid}_emotion" value="${job.emotion ?? 1.0}" step="0.1" min="0" max="2">
+          </div>
+          <div>
+            <label>Token target</label>
+            <input type="number" id="${uid}_token_target" value="${job.token_target ?? 50}" min="50" max="550">
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm"
+          onclick="confirmJobResume('${uid}', '${esc(job.dir_name)}', '${esc(job.isbn)}')">
+          ▶ Queue resume
+        </button>
+      </div>`;
+
+    return row + panel;
   }
 
   // ── poll & update ─────────────────────────────────────────────────────────
 
   let _pollTimer = null;
   let _voices = [];
+  const _jobRegistry = {};  // uid → job dict, for resume panel lookups
 
   function pollNow() {
     if (_pollTimer) clearTimeout(_pollTimer);
@@ -579,14 +935,18 @@
                                .slice().reverse();
 
       const qList = document.getElementById('queue-list');
-      qList.innerHTML = queued.length
-        ? queued.map(renderJobItem).join('')
-        : '<div class="empty">No jobs queued.</div>';
+      if (!qList.querySelector('.resume-panel.open')) {
+        qList.innerHTML = queued.length
+          ? queued.map((j, i) => { const uid = 'q' + i; _jobRegistry[uid] = j; return renderJobItem(j, uid); }).join('')
+          : '<div class="empty">No jobs queued.</div>';
+      }
 
       const hList = document.getElementById('history-list');
-      hList.innerHTML = history.length
-        ? history.map(renderJobItem).join('')
-        : '<div class="empty">No completed jobs.</div>';
+      if (!hList.querySelector('.resume-panel.open')) {
+        hList.innerHTML = history.length
+          ? history.map((j, i) => { const uid = 'h' + i; _jobRegistry[uid] = j; return renderJobItem(j, uid); }).join('')
+          : '<div class="empty">No completed jobs.</div>';
+      }
 
     } catch(e) {
       document.getElementById('header-status').textContent = 'Offline';
@@ -599,6 +959,7 @@
 
   // Start
   poll();
+  loadDetected();
   </script>
 </body>
 </html>

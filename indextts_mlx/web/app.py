@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -94,7 +95,62 @@ def create_app(
             temperature=float(data.get("temperature", 1.0)),
             emotion=float(data.get("emotion", 1.0)),
             cfg_rate=float(data.get("cfg_rate", 0.7)),
-            token_target=int(data.get("token_target", 250)),
+            token_target=int(data.get("token_target", 50)),
+        )
+        return jsonify({"job": job}), 201
+
+    @app.route("/api/library")
+    def api_library():
+        """Return all .m4b files found under audiobooks_dir."""
+        books = []
+        for m4b in sorted(audiobooks_dir.rglob("*.m4b")):
+            rel = m4b.relative_to(audiobooks_dir)
+            stat = m4b.stat()
+            books.append(
+                {
+                    "name": m4b.stem,
+                    "path": str(rel),
+                    "size_bytes": stat.st_size,
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime).strftime(
+                        "%Y-%m-%dT%H:%M:%S"
+                    ),
+                }
+            )
+        return jsonify({"books": books})
+
+    @app.route("/api/scan")
+    def api_scan():
+        """Return directories detected in audiobooks_dir that can be resumed."""
+        return jsonify({"dirs": queue.scan_dirs()})
+
+    @app.route("/api/resume", methods=["POST"])
+    def api_resume():
+        from indextts_mlx.web.queue_manager import _detect_stage
+
+        data = request.get_json(force=True)
+        dir_name = (data.get("dir_name") or "").strip()
+        if not dir_name:
+            return jsonify({"error": "'dir_name' is required"}), 400
+        isbn = (data.get("isbn") or dir_name).strip()
+
+        # Auto-detect start_stage from directory contents if not supplied
+        start_stage = (data.get("start_stage") or "").strip() or None
+        if not start_stage:
+            job_dir = audiobooks_dir / dir_name
+            start_stage, _ = _detect_stage(job_dir)
+            if start_stage is None:
+                return jsonify({"error": "Cannot detect resume stage — directory empty or already done"}), 400
+
+        job = queue.resume(
+            dir_name=dir_name,
+            isbn=isbn,
+            voice=data.get("voice", "").strip() or None,
+            start_stage=start_stage,
+            steps=int(data.get("steps", 10)),
+            temperature=float(data.get("temperature", 1.0)),
+            emotion=float(data.get("emotion", 1.0)),
+            cfg_rate=float(data.get("cfg_rate", 0.7)),
+            token_target=int(data.get("token_target", 50)),
         )
         return jsonify({"job": job}), 201
 

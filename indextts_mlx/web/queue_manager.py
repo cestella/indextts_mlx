@@ -154,3 +154,116 @@ class QueueManager:
                 if job["status"] == RUNNING:
                     return dict(job)
         return None
+
+    def resume(
+        self,
+        dir_name: str,
+        isbn: str,
+        voice: str | None,
+        start_stage: str,
+        steps: int = 10,
+        temperature: float = 1.0,
+        emotion: float = 1.0,
+        cfg_rate: float = 0.7,
+        token_target: int = 250,
+    ) -> dict:
+        """Queue a job that resumes from an existing directory at start_stage."""
+        job: dict = {
+            "id": str(uuid.uuid4()),
+            "isbn": isbn,
+            "epub_url": None,  # no download needed
+            "voice": voice,
+            "steps": steps,
+            "temperature": temperature,
+            "emotion": emotion,
+            "cfg_rate": cfg_rate,
+            "token_target": token_target,
+            "extra_opts": {},
+            "status": QUEUED,
+            "stage": None,
+            "start_stage": start_stage,  # worker skips earlier stages
+            "created_at": _now(),
+            "started_at": None,
+            "finished_at": None,
+            "error": None,
+            "dir_name": dir_name,
+            "title": None,
+            "author": None,
+            "m4b_path": None,
+            "epub_path": None,
+        }
+        with self._lock:
+            self._jobs.append(job)
+            self._save_locked()
+        return job
+
+    def scan_dirs(self) -> list[dict]:
+        """Scan audiobooks_dir for subdirs not already in the queue.
+
+        Returns a list of dicts describing each detected directory and what
+        stage the worker would resume from.
+        """
+        # Collect dir_names already tracked in the queue
+        with self._lock:
+            tracked = {j["dir_name"] for j in self._jobs if j["status"] not in (DONE, CANCELLED)}
+
+        results = []
+        for subdir in sorted(self.audiobooks_dir.iterdir()):
+            if not subdir.is_dir() or subdir.name.startswith("."):
+                continue
+            dir_name = subdir.name
+            if dir_name in tracked:
+                continue
+
+            start_stage, description = _detect_stage(subdir)
+            if start_stage is None:
+                continue  # nothing actionable here
+
+            results.append(
+                {
+                    "dir_name": dir_name,
+                    "start_stage": start_stage,
+                    "description": description,
+                }
+            )
+        return results
+
+
+def _detect_stage(job_dir: Path) -> tuple[str | None, str]:
+    """Inspect a job directory and return (start_stage, human_description).
+
+    Returns (None, '') when the directory has nothing actionable (empty, or
+    already finished).
+    """
+    # Already packaged?
+    m4b_files = list(job_dir.glob("*.m4b"))
+    if m4b_files:
+        return None, "already done"
+
+    chapters_txt = job_dir / "chapters_txt"
+    chapters_mp3 = job_dir / "chapters_mp3"
+
+    txt_files = sorted(chapters_txt.glob("*.txt")) if chapters_txt.is_dir() else []
+    mp3_files = sorted(chapters_mp3.glob("*.mp3")) if chapters_mp3.is_dir() else []
+
+    # Have both txt and mp3s — may be mid-synthesis or ready to package
+    if txt_files and mp3_files:
+        if len(mp3_files) >= len(txt_files):
+            # All chapters synthesized → go straight to packaging
+            return "packaging", f"{len(mp3_files)} mp3s ready, packaging M4B"
+        else:
+            return (
+                "synthesizing",
+                f"{len(mp3_files)}/{len(txt_files)} chapters synthesized, resuming",
+            )
+
+    # Have txt but no mp3s → synthesize from scratch
+    if txt_files:
+        return "synthesizing", f"{len(txt_files)} chapters extracted, ready to synthesize"
+
+    # Have an epub but no txt → extract first
+    epub_files = list(job_dir.glob("*.epub"))
+    if epub_files:
+        return "extracting", f"EPUB present ({epub_files[0].name}), ready to extract"
+
+    return None, "empty"
