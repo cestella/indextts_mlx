@@ -708,7 +708,7 @@ def synthesize(
         silence_between_chunks_ms=silence_ms,
         crossfade_ms=crossfade_ms,
         segmenter_config=seg_config,
-        verbose=verbose,
+        verbose=False,  # callbacks below handle all progress output
     )
 
     chunk_start_times: list = []
@@ -758,6 +758,22 @@ def synthesize(
         import librosa
 
         audio = librosa.resample(audio, orig_sr=22050, target_sr=sample_rate).astype(np.float32)
+
+    # Append end-chime if requested
+    if end_chime is not None:
+        chime_audio, chime_sr = sf.read(str(end_chime), dtype="float32")
+        if chime_audio.ndim > 1:
+            chime_audio = chime_audio.mean(axis=1)
+        chime_audio = chime_audio.ravel()
+        if chime_sr != sample_rate:
+            import librosa
+
+            chime_audio = (
+                librosa.resample(chime_audio, orig_sr=chime_sr, target_sr=sample_rate)
+                .astype(np.float32)
+                .ravel()
+            )
+        audio = np.concatenate([audio, chime_audio])
 
     duration = len(audio) / sample_rate
     out_path = Path(out)

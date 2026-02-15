@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import warnings
 import numpy as np
 import mlx.core as mx
@@ -30,6 +31,55 @@ from sentencepiece import SentencePieceProcessor
 
 # Output sample rate
 OUTPUT_SAMPLE_RATE = 22050
+
+# Character substitutions applied before BPE tokenization.
+# Mirrors the `char_rep_map` in the original TextNormalizer so that
+# punctuation the BPE vocabulary doesn't contain (e.g. straight ASCII `"`)
+# is replaced with an equivalent the model can handle.
+_CHAR_REP_MAP = {
+    "\u2018": "'",  # left single quote  → '
+    "\u2019": "'",  # right single quote → '
+    "\u201c": "'",  # left double quote  → '
+    "\u201d": "'",  # right double quote → '
+    '"': "'",  # straight ASCII "   → '
+    "(": "'",
+    ")": "'",
+    "[": "'",
+    "]": "'",
+    "\u300a": "'",  # 《 → '
+    "\u300b": "'",  # 》 → '
+    "\u3010": "'",  # 【 → '
+    "\u3011": "'",  # 】 → '
+    "\u300c": "'",  # 「 → '
+    "\u300d": "'",  # 」 → '
+    "\uff1a": ",",  # ： → ,
+    "\uff1b": ",",  # ； → ,
+    ";": ",",
+    "\uff0c": ",",  # ， → ,
+    "\u3002": ".",  # 。 → .
+    "\uff01": "!",  # ！ → !
+    "\uff1f": "?",  # ？ → ?
+    "\n": " ",
+    "\u00b7": "-",  # · → -
+    "\u3001": ",",  # 、 → ,
+    "...": "…",
+    ",,,": "…",
+    "\u2026\u2026": "…",  # …… → …
+    "\u2014": "-",  # — → -
+    "\uff5e": "-",  # ～ → -
+    "~": "-",
+    ":": ",",
+}
+# Build a single compiled pattern for all keys (longest first to avoid
+# partial matches when one key is a prefix of another).
+_CHAR_REP_PATTERN = re.compile(
+    "|".join(re.escape(k) for k in sorted(_CHAR_REP_MAP, key=len, reverse=True))
+)
+
+
+def _preprocess_text(text: str) -> str:
+    """Apply character-level substitutions that mirror the original TextNormalizer."""
+    return _CHAR_REP_PATTERN.sub(lambda m: _CHAR_REP_MAP[m.group()], text)
 
 
 def _sample_top_k(logits: mx.array, temperature: float = 0.8, top_k: int = 200) -> int:
@@ -356,7 +406,7 @@ class IndexTTS2:
             audio_16k, audio_22k = self._load_audio(spk_path, sample_rate)
 
         # ── Tokenize text ─────────────────────────────────────────────────────
-        text_tokens = mx.array([self.sp.encode(text.upper())])
+        text_tokens = mx.array([self.sp.encode(_preprocess_text(text).upper())])
 
         # ── Compute reference mel ─────────────────────────────────────────────
         ref_mel_80 = compute_mel_s2mel(audio_22k)
