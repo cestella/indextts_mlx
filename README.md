@@ -180,11 +180,12 @@ All paths can be set via environment variables; constructor arguments take prece
 All commands are subcommands of the unified `indextts` entry point:
 
 ```
-indextts synthesize       Text-to-speech synthesis
+indextts synthesize         Text-to-speech synthesis
 indextts classify-emotions  Classify emotions for JSONL pipeline preparation
-indextts extract          Extract plain-text chapters from an EPUB
-indextts m4b              Package audio chapters into a .m4b audiobook
-indextts download-weights Download and convert all model weights from HuggingFace
+indextts extract            Extract plain-text chapters from an EPUB
+indextts m4b                Package audio chapters into a .m4b audiobook
+indextts web                Web UI: queue, download, extract, synthesize, and package audiobooks
+indextts download-weights   Download and convert all model weights from HuggingFace
 ```
 
 Run `indextts <command> --help` for full option listings.
@@ -268,6 +269,13 @@ indextts synthesize --file ~/chapters --out ~/audio --out-ext mp3 --voices-dir ~
 | `--weights-dir PATH` | — | Override weights directory |
 | `--bpe-model PATH` | — | Override BPE model path |
 
+**Batch-mode progress and status:**
+
+| Flag | Description |
+|------|-------------|
+| `--status DIR` | After every chunk and every completed file, write `DIR/synth_status.json` with chunk ETA, job ETA, files remaining, and avg wall-time per chunk. Used by `indextts web` to display live progress. |
+| `-v / --verbose` | Print per-chunk preview, ETA, and realtime factor to stdout. Suppresses tqdm bars. |
+
 **JSONL chapter mode extras:**
 
 | Flag | Description |
@@ -275,7 +283,7 @@ indextts synthesize --file ~/chapters --out ~/audio --out-ext mp3 --voices-dir ~
 | `--cache-dir PATH` | Cache directory for segment audio (SHA-256 keyed; re-renders are free) |
 | `--emotion-config PATH` | Path to `emotions.json` preset config (auto-detected from `--voices-dir` if not set) |
 | `--enable-drift` | Apply bounded per-segment drift to emotion vectors |
-| `--end-chime PATH` | Audio file appended to the end of the chapter (resampled if needed) |
+| `--end-chime PATH` | Audio file appended to the end of every output file (all modes; resampled if needed) |
 | `--list-voices` | List available voice names in `--voices-dir` and exit |
 
 ---
@@ -376,6 +384,110 @@ indextts m4b --isbn 9780743273565 --chapters-dir ~/audio/chapters --out ~/audiob
 | `-v / --verbose` | — | Print `m4b-tool` output |
 
 Requires `m4b-tool`: `brew install m4b-tool`.
+
+---
+
+### `indextts web`
+
+A local web application that automates the full audiobook pipeline (download → extract → synthesize → package) via a browser UI. Designed for use from Safari on iOS and Chrome on desktop.
+
+```bash
+indextts web --audiobooks-dir ~/audiobooks \
+             --voices-dir ./voices \
+             --voice british_female \
+             --port 5000
+```
+
+Then open `http://localhost:5000/` in a browser (or `http://<mac-ip>:5000/` from another device on the same network).
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--audiobooks-dir PATH` | *(required)* | Root directory for all audiobooks. Stores EPUBs, chapter text, chapter MP3s, and final M4B files. The job queue is persisted here as `.queue.json`. |
+| `--voices-dir PATH` | — | Directory of voice reference audio files; populates the voice dropdown in the UI |
+| `--voice NAME` | — | Default voice name pre-selected in the UI |
+| `--port INT` | `5000` | Port to listen on |
+| `--host TEXT` | `0.0.0.0` | Bind address; use `127.0.0.1` to restrict to localhost |
+
+**Submitting a job:** provide an EPUB URL and ISBN. The server creates a directory named after the stripped ISBN (e.g. `978-0-06-112008-4` → `9780061120084/`), downloads the EPUB, and runs the full pipeline automatically.
+
+**Directory layout** for each book:
+
+```
+{audiobooks-dir}/
+└── 9780061120084/
+    ├── 9780061120084.epub       ← downloaded EPUB
+    ├── chapters_txt/            ← output of indextts extract
+    │   ├── chapter_01_….txt
+    │   └── …
+    ├── chapters_mp3/            ← output of indextts synthesize
+    │   ├── chapter_01_….mp3
+    │   └── …
+    ├── .status/
+    │   └── synth_status.json   ← live progress (polled by UI)
+    └── <Title> - <Author>.m4b  ← final output
+```
+
+**API endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Single-page UI |
+| `GET` | `/api/queue` | All jobs, active job, current synth status, voice list |
+| `POST` | `/api/submit` | Submit a new job (JSON body: `isbn`, `epub_url`, `voice`, `steps`, `emotion`, `token_target`) |
+| `POST` | `/api/cancel/<id>` | Cancel a queued or running job |
+| `GET` | `/api/status/<id>` | Job metadata + current `synth_status.json` content |
+| `GET` | `/files/<path>` | Serve or browse files under `--audiobooks-dir` |
+
+**Job lifecycle:**
+
+```
+queued → running → done
+                 → failed
+                 → cancelled
+          (crash) → interrupted   ← re-submit to retry
+```
+
+**Restart behaviour:** The job queue is persisted to `{audiobooks-dir}/.queue.json` after every mutation (atomic tmp-then-rename). On restart:
+
+- **Queued** jobs are fully restored and the worker picks them up automatically — no action required.
+- **Running** jobs are marked `interrupted` (not silently re-queued, since partial output may exist in the job directory). Re-submit via the UI if you want to retry.
+- **Done / failed / cancelled** jobs remain in the history panel.
+
+#### Web architecture
+
+```
+cli/web.py              click entry point; wires together the three components and starts Flask
+
+indextts_mlx/web/
+├── queue_manager.py    QueueManager — thread-safe, JSON-backed persistent job store
+│                         • submit() / cancel() / update() / get_next_queued()
+│                         • atomically writes {audiobooks_dir}/.queue.json after every mutation
+│                         • on reload: resets "running" → "interrupted"
+│
+├── worker.py           Worker(threading.Thread) — single background thread
+│                         • polls QueueManager every 2 s for the next queued job
+│                         • runs pipeline stages sequentially via subprocess.Popen:
+│                             1. wget          (download EPUB)
+│                             2. indextts extract  (chapters_txt/)
+│                             3. indextts synthesize --status .status/ (chapters_mp3/)
+│                             4. indextts m4b  (final .m4b)
+│                         • stores Popen handle so cancel() can SIGTERM/SIGKILL it
+│                         • reads epub metadata (title/author) via ebooklib after download
+│
+├── app.py              Flask application factory (create_app)
+│                         • all routes are pure JSON except GET / (HTML) and GET /files/
+│                         • /files/ path-traversal protected (resolve + relative_to check)
+│                         • reads .status/synth_status.json on demand (no background thread)
+│
+└── templates/
+    └── index.html      Single-page UI — vanilla JS, no framework dependencies
+                          • polls /api/queue every 2 s (active) or 5 s (idle)
+                          • dual progress bars: file-level + chunk-level during synthesis
+                          • stat boxes: chunk ETA, job ETA, files remaining, avg s/chunk
+                          • mobile-responsive dark theme (CSS custom properties + grid)
+```
+
+The `--status DIR` option added to `indextts synthesize` writes `DIR/synth_status.json` atomically after every chunk and every completed file. The Flask `/api/queue` and `/api/status/<id>` endpoints read this file on demand and forward it to the UI, keeping the server stateless with respect to synthesis progress.
 
 ---
 

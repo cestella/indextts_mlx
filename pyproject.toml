@@ -21,6 +21,7 @@ dependencies = [
     "ebooklib",
     "beautifulsoup4",
     "lxml",
+    "flask>=3.0",
 ]
 
 [project.optional-dependencies]

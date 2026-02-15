@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>IndexTTS — Audiobook Builder</title>
+  <style>
+    /* ── reset & base ─────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3350;
+      --accent: #5b8ef0;
+      --accent-dim: #3a5fbb;
+      --green: #3ecf8e;
+      --yellow: #f5a623;
+      --red: #e74c3c;
+      --text: #e2e8f0;
+      --text-dim: #8892a4;
+      --radius: 10px;
+      --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+    }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    /* ── layout ───────────────────────────────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: -0.01em; }
+    header .subtitle { color: var(--text-dim); font-size: 0.8rem; }
+    .pulse {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+      animation: pulse 2s infinite;
+      flex-shrink: 0;
+    }
+    @keyframes pulse { 0%,100%{ opacity:1; } 50%{ opacity:0.3; } }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 20px 16px 60px;
+      display: grid;
+      gap: 20px;
+    }
+
+    @media (min-width: 680px) {
+      .container { padding: 28px 24px 80px; }
+    }
+
+    /* ── cards ────────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+    }
+    .card-title {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      margin-bottom: 14px;
+    }
+
+    /* ── form ─────────────────────────────────────────────────────────────── */
+    .form-grid {
+      display: grid;
+      gap: 12px;
+    }
+    @media (min-width: 560px) {
+      .form-grid { grid-template-columns: 1fr 1fr; }
+      .form-grid .full { grid-column: 1 / -1; }
+    }
+    label { display: block; font-size: 0.78rem; color: var(--text-dim); margin-bottom: 4px; }
+    input, select {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 0.9rem;
+      padding: 9px 11px;
+      outline: none;
+      transition: border-color 0.15s;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    input:focus, select:focus { border-color: var(--accent); }
+    .field-row { display: flex; gap: 8px; align-items: flex-end; }
+    .field-row input { flex: 1; }
+
+    /* advanced toggle */
+    .adv-toggle {
+      background: none; border: none; color: var(--accent);
+      font-size: 0.8rem; cursor: pointer; padding: 0; margin-top: 4px;
+    }
+    .adv-panel { display: none; }
+    .adv-panel.open { display: grid; gap: 12px; margin-top: 12px; }
+    @media (min-width: 560px) { .adv-panel.open { grid-template-columns: 1fr 1fr 1fr; } }
+
+    /* submit button */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 6px;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-family: var(--font);
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-dim); }
+    .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-danger { background: var(--red); color: #fff; font-size: 0.8rem; padding: 6px 14px; }
+    .btn-sm { font-size: 0.8rem; padding: 6px 12px; }
+
+    /* ── active job ───────────────────────────────────────────────────────── */
+    .active-hidden { display: none; }
+    .stage-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .stage-downloading  { background:#1e3a5f; color:#5b9ef0; }
+    .stage-extracting   { background:#2a2500; color:#f5c842; }
+    .stage-synthesizing { background:#0f2d1f; color:#3ecf8e; }
+    .stage-packaging    { background:#2d1020; color:#e57bbc; }
+    .stage-starting     { background:#222; color:#888; }
+
+    .progress-wrap {
+      background: var(--surface2);
+      border-radius: 6px;
+      height: 8px;
+      margin: 12px 0 6px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      border-radius: 6px;
+      background: var(--accent);
+      transition: width 0.4s ease;
+    }
+    .progress-bar.synth { background: var(--green); }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .stat-box {
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .stat-label { font-size: 0.68rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+    .stat-value { font-size: 1.05rem; font-weight: 700; margin-top: 2px; }
+    .stat-value.accent { color: var(--accent); }
+    .stat-value.green { color: var(--green); }
+    .stat-value.yellow { color: var(--yellow); }
+
+    /* ── job list ─────────────────────────────────────────────────────────── */
+    .job-list { display: flex; flex-direction: column; gap: 10px; }
+    .job-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .job-dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    }
+    .dot-queued      { background: var(--text-dim); }
+    .dot-running     { background: var(--accent); animation: pulse 1.5s infinite; }
+    .dot-done        { background: var(--green); }
+    .dot-failed      { background: var(--red); }
+    .dot-cancelled   { background: #555; }
+    .dot-interrupted { background: var(--yellow); }
+
+    .job-info { flex: 1; min-width: 0; }
+    .job-isbn { font-weight: 600; font-size: 0.9rem; }
+    .job-meta { font-size: 0.75rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .job-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+    .job-status-text { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+    .status-queued      { color: var(--text-dim); }
+    .status-running     { color: var(--accent); }
+    .status-done        { color: var(--green); }
+    .status-failed      { color: var(--red); }
+    .status-cancelled   { color: #666; }
+    .status-interrupted { color: var(--yellow); }
+
+    .download-link {
+      display: inline-flex; align-items: center; gap: 5px;
+      color: var(--accent); text-decoration: none; font-size: 0.8rem;
+      padding: 5px 10px; border: 1px solid var(--border);
+      border-radius: 6px; transition: background 0.15s;
+    }
+    .download-link:hover { background: var(--surface); }
+
+    /* ── empty states ─────────────────────────────────────────────────────── */
+    .empty { color: var(--text-dim); font-size: 0.85rem; padding: 10px 0; }
+
+    /* ── toast ────────────────────────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+      background: #2b2f3e; border: 1px solid var(--border); color: var(--text);
+      padding: 10px 18px; border-radius: 8px; font-size: 0.85rem;
+      transition: transform 0.3s ease; z-index: 100; white-space: nowrap;
+      pointer-events: none;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+    #toast.error { border-color: var(--red); color: var(--red); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="pulse" id="live-dot" title="Live updates active"></div>
+    <div>
+      <h1>IndexTTS — Audiobook Builder</h1>
+      <div class="subtitle" id="header-status">Ready</div>
+    </div>
+  </header>
+
+  <div class="container">
+
+    <!-- ── Submit form ─────────────────────────────────────────────────── -->
+    <div class="card">
+      <div class="card-title">New Audiobook Job</div>
+      <form id="submit-form">
+        <div class="form-grid">
+          <div class="full">
+            <label for="epub_url">EPUB URL</label>
+            <input type="url" id="epub_url" name="epub_url" placeholder="https://…/book.epub" required>
+          </div>
+          <div>
+            <label for="isbn">ISBN</label>
+            <input type="text" id="isbn" name="isbn" placeholder="978-0-06-112008-4" required>
+          </div>
+          <div>
+            <label for="voice">Voice</label>
+            <select id="voice" name="voice">
+              <option value="">— select voice —</option>
+            </select>
+          </div>
+        </div>
+
+        <button type="button" class="adv-toggle" onclick="toggleAdv()">▸ Advanced options</button>
+        <div class="adv-panel" id="adv-panel">
+          <div>
+            <label for="steps">CFM Steps <span style="color:var(--text-dim)">(10=fast)</span></label>
+            <input type="number" id="steps" name="steps" value="10" min="1" max="50">
+          </div>
+          <div>
+            <label for="emotion">Emotion <span style="color:var(--text-dim)">(0–2)</span></label>
+            <input type="number" id="emotion" name="emotion" value="1.0" step="0.1" min="0" max="2">
+          </div>
+          <div>
+            <label for="token_target">Token target</label>
+            <input type="number" id="token_target" name="token_target" value="250" min="50" max="550">
+          </div>
+        </div>
+
+        <div style="margin-top:16px;">
+          <button type="submit" class="btn btn-primary" id="submit-btn">
+            <span>Queue Job</span>
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ── Active job ──────────────────────────────────────────────────── -->
+    <div class="card" id="active-card" style="display:none">
+      <div class="card-title">Active Job</div>
+      <div id="active-content"></div>
+    </div>
+
+    <!-- ── Queue ───────────────────────────────────────────────────────── -->
+    <div class="card">
+      <div class="card-title">Queue</div>
+      <div class="job-list" id="queue-list">
+        <div class="empty">No jobs queued.</div>
+      </div>
+    </div>
+
+    <!-- ── History ─────────────────────────────────────────────────────── -->
+    <div class="card">
+      <div class="card-title">History</div>
+      <div class="job-list" id="history-list">
+        <div class="empty">No completed jobs.</div>
+      </div>
+    </div>
+
+  </div><!-- /container -->
+
+  <div id="toast"></div>
+
+  <script>
+  // ── utilities ────────────────────────────────────────────────────────────
+
+  function fmtEta(s) {
+    if (s == null) return '—';
+    s = Math.round(s);
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60), sec = s % 60;
+    if (m < 60) return m + 'm ' + String(sec).padStart(2,'0') + 's';
+    const h = Math.floor(m / 60), min = m % 60;
+    return h + 'h ' + String(min).padStart(2,'0') + 'm';
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  }
+
+  function esc(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  let _toastTimer = null;
+  function toast(msg, isError=false) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'show' + (isError ? ' error' : '');
+    if (_toastTimer) clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => { el.className = ''; }, 3000);
+  }
+
+  // ── advanced toggle ──────────────────────────────────────────────────────
+
+  function toggleAdv() {
+    const panel = document.getElementById('adv-panel');
+    const btn = document.querySelector('.adv-toggle');
+    const open = panel.classList.toggle('open');
+    btn.textContent = (open ? '▾' : '▸') + ' Advanced options';
+  }
+
+  // ── submit ───────────────────────────────────────────────────────────────
+
+  document.getElementById('submit-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.querySelector('span').textContent = 'Queuing…';
+    const data = {
+      epub_url: document.getElementById('epub_url').value.trim(),
+      isbn: document.getElementById('isbn').value.trim(),
+      voice: document.getElementById('voice').value,
+      steps: parseInt(document.getElementById('steps').value),
+      emotion: parseFloat(document.getElementById('emotion').value),
+      token_target: parseInt(document.getElementById('token_target').value),
+    };
+    try {
+      const r = await fetch('/api/submit', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(data),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Submit failed');
+      toast('Job queued ✓');
+      document.getElementById('submit-form').reset();
+      pollNow();
+    } catch(err) {
+      toast(err.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.querySelector('span').textContent = 'Queue Job';
+    }
+  });
+
+  // ── cancel ───────────────────────────────────────────────────────────────
+
+  async function cancelJob(jobId) {
+    if (!confirm('Cancel this job?')) return;
+    try {
+      const r = await fetch('/api/cancel/' + jobId, {method:'POST'});
+      if (!r.ok) throw new Error('Cancel failed');
+      toast('Job cancelled');
+      pollNow();
+    } catch(err) {
+      toast(err.message, true);
+    }
+  }
+
+  // ── render helpers ───────────────────────────────────────────────────────
+
+  function renderStageBadge(stage) {
+    if (!stage) return '';
+    const label = stage.charAt(0).toUpperCase() + stage.slice(1);
+    return `<span class="stage-badge stage-${esc(stage)}">${esc(label)}</span>`;
+  }
+
+  function renderActiveJob(job, synth) {
+    if (!job) return '';
+    const stageHTML = renderStageBadge(job.stage);
+    const title = job.title ? `<strong>${esc(job.title)}</strong>` : `ISBN ${esc(job.isbn)}`;
+
+    let progressHTML = '';
+    let statsHTML = '';
+
+    if (job.stage === 'synthesizing' && synth) {
+      const pct = synth.total_files > 0
+        ? Math.round((synth.file_index / synth.total_files) * 100)
+        : 0;
+      const chunkPct = synth.total_chunks > 0
+        ? Math.round((synth.chunk_index / synth.total_chunks) * 100)
+        : 0;
+      progressHTML = `
+        <div style="margin-top:8px;">
+          <div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:4px;">
+            File ${synth.file_index + 1} / ${synth.total_files} — ${esc(synth.file_name || '')}
+          </div>
+          <div class="progress-wrap">
+            <div class="progress-bar synth" style="width:${pct}%"></div>
+          </div>
+          <div style="font-size:0.7rem;color:var(--text-dim);margin-bottom:2px;">
+            Chunk ${synth.chunk_index} / ${synth.total_chunks}
+          </div>
+          <div class="progress-wrap" style="height:4px">
+            <div class="progress-bar" style="width:${chunkPct}%"></div>
+          </div>
+        </div>`;
+      statsHTML = `
+        <div class="stat-grid">
+          <div class="stat-box">
+            <div class="stat-label">Chunk ETA</div>
+            <div class="stat-value accent">${fmtEta(synth.chunk_eta_s)}</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">Job ETA</div>
+            <div class="stat-value accent">${fmtEta(synth.job_eta_s)}</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">Files left</div>
+            <div class="stat-value yellow">${synth.files_remaining ?? '—'}</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">s/chunk avg</div>
+            <div class="stat-value">${synth.avg_wall_s_per_chunk != null ? synth.avg_wall_s_per_chunk.toFixed(1) + 's' : '—'}</div>
+          </div>
+        </div>`;
+    } else if (job.stage === 'downloading') {
+      progressHTML = `<div style="margin-top:10px;color:var(--text-dim);font-size:0.85rem;">Downloading EPUB…</div>`;
+    } else if (job.stage === 'extracting') {
+      progressHTML = `<div style="margin-top:10px;color:var(--text-dim);font-size:0.85rem;">Extracting chapters…</div>`;
+    } else if (job.stage === 'packaging') {
+      progressHTML = `<div style="margin-top:10px;color:var(--text-dim);font-size:0.85rem;">Packaging M4B…</div>`;
+    }
+
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="margin-bottom:4px">${title}</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            ${stageHTML}
+            <span style="font-size:0.75rem;color:var(--text-dim)">Started ${fmtDate(job.started_at)}</span>
+          </div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="cancelJob('${esc(job.id)}')">Cancel</button>
+      </div>
+      ${progressHTML}
+      ${statsHTML}`;
+  }
+
+  function dotClass(status) {
+    return 'job-dot dot-' + status;
+  }
+
+  function statusClass(status) {
+    return 'job-status-text status-' + status;
+  }
+
+  function renderJobItem(job) {
+    const title = job.title ? esc(job.title) : `ISBN ${esc(job.isbn)}`;
+    const by = job.author ? ` · ${esc(job.author)}` : '';
+    const date = fmtDate(job.created_at);
+    const canCancel = job.status === 'queued' || job.status === 'running';
+    const cancelBtn = canCancel
+      ? `<button class="btn btn-danger btn-sm" onclick="cancelJob('${esc(job.id)}')">Cancel</button>`
+      : '';
+    const m4bLink = job.m4b_path
+      ? `<a class="download-link" href="/files/${esc(job.m4b_path)}" download>⬇ M4B</a>`
+      : '';
+    const epubLink = job.epub_path
+      ? `<a class="download-link" href="/files/${esc(job.epub_path)}" download>⬇ EPUB</a>`
+      : '';
+    const errNote = job.error
+      ? `<div style="font-size:0.7rem;color:var(--red);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${esc(job.error)}">${esc(job.error.split('\n')[0])}</div>`
+      : '';
+    return `
+      <div class="job-item">
+        <div class="${dotClass(job.status)}"></div>
+        <div class="job-info">
+          <div class="job-isbn">${title}${by}</div>
+          <div class="job-meta">${date} · ${esc(job.isbn)}</div>
+          ${errNote}
+        </div>
+        <div class="job-actions">
+          ${m4bLink}${epubLink}
+          <span class="${statusClass(job.status)}">${esc(job.status)}</span>
+          ${cancelBtn}
+        </div>
+      </div>`;
+  }
+
+  // ── poll & update ─────────────────────────────────────────────────────────
+
+  let _pollTimer = null;
+  let _voices = [];
+
+  function pollNow() {
+    if (_pollTimer) clearTimeout(_pollTimer);
+    poll();
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch('/api/queue');
+      const data = await r.json();
+
+      // Update voice dropdown once
+      if (data.voices && data.voices.length && !_voices.length) {
+        _voices = data.voices;
+        const sel = document.getElementById('voice');
+        data.voices.forEach(v => {
+          const opt = document.createElement('option');
+          opt.value = v; opt.textContent = v;
+          sel.appendChild(opt);
+        });
+      }
+
+      // Active job
+      const activeCard = document.getElementById('active-card');
+      const activeContent = document.getElementById('active-content');
+      if (data.active) {
+        activeCard.style.display = '';
+        activeContent.innerHTML = renderActiveJob(data.active, data.synth_status);
+        document.getElementById('header-status').textContent =
+          (data.active.title || data.active.isbn) + ' — ' + (data.active.stage || 'running');
+      } else {
+        activeCard.style.display = 'none';
+        document.getElementById('header-status').textContent = 'Ready';
+      }
+
+      // Split jobs
+      const queued = data.jobs.filter(j => j.status === 'queued');
+      const history = data.jobs.filter(j => !['queued','running'].includes(j.status))
+                               .slice().reverse();
+
+      const qList = document.getElementById('queue-list');
+      qList.innerHTML = queued.length
+        ? queued.map(renderJobItem).join('')
+        : '<div class="empty">No jobs queued.</div>';
+
+      const hList = document.getElementById('history-list');
+      hList.innerHTML = history.length
+        ? history.map(renderJobItem).join('')
+        : '<div class="empty">No completed jobs.</div>';
+
+    } catch(e) {
+      document.getElementById('header-status').textContent = 'Offline';
+    }
+
+    // Poll faster when a job is active
+    const queueHasRunning = document.getElementById('active-card').style.display !== 'none';
+    _pollTimer = setTimeout(poll, queueHasRunning ? 2000 : 5000);
+  }
+
+  // Start
+  poll();
+  </script>
+</body>
+</html>

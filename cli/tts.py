@@ -51,6 +51,53 @@ def _fmt_eta(seconds: float) -> str:
     return f"{h}h{m:02d}m{s:02d}s"
 
 
+def _write_synth_status(
+    status_path: Path,
+    file_index: int,
+    total_files: int,
+    file_name: str,
+    file_done: bool,
+    chunk_index: int,
+    total_chunks: int,
+    file_wall_times: list,
+    chunk_wall_times: list,
+) -> None:
+    """Atomically write a JSON status snapshot for the web UI to poll."""
+    import json as _json
+
+    mean_chunk = sum(chunk_wall_times) / len(chunk_wall_times) if chunk_wall_times else None
+    mean_file = sum(file_wall_times) / len(file_wall_times) if file_wall_times else None
+    chunks_left = total_chunks - chunk_index
+    files_left = total_files - file_index - (1 if file_done else 0)
+    chunk_eta = mean_chunk * chunks_left if mean_chunk else None
+    file_eta = (
+        (chunk_eta or 0) + (mean_file * files_left if mean_file else 0)
+        if mean_chunk or mean_file
+        else None
+    )
+    all_chunk_times = list(file_wall_times) + list(chunk_wall_times)
+    avg_rtf = None
+    if all_chunk_times:
+        avg_rtf = round(sum(all_chunk_times) / len(all_chunk_times), 3)
+    data = {
+        "file_index": file_index,
+        "total_files": total_files,
+        "file_name": file_name,
+        "file_done": file_done,
+        "chunk_index": chunk_index,
+        "total_chunks": total_chunks,
+        "chunks_remaining": chunks_left,
+        "files_remaining": files_left,
+        "chunk_eta_s": round(chunk_eta, 1) if chunk_eta is not None else None,
+        "job_eta_s": round(file_eta, 1) if file_eta is not None else None,
+        "avg_wall_s_per_chunk": round(mean_chunk, 2) if mean_chunk else None,
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    tmp = status_path.with_suffix(".tmp")
+    tmp.write_text(_json.dumps(data))
+    tmp.replace(status_path)
+
+
 def _make_verbose_callbacks():
     """Return (on_chunk, on_chunk_done) callbacks that print per-chunk progress
     with an ETA derived from the rolling mean wall-time per chunk."""
@@ -339,6 +386,13 @@ def add_options(options):
     is_flag=True,
     help="List available voice names in --voices-dir and exit.",
 )
+@click.option(
+    "--status",
+    "status_dir",
+    default=None,
+    type=click.Path(),
+    help="Directory to write synth_status.json after every chunk (batch mode).",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Print effective settings summary.")
 def synthesize(
     text,
@@ -378,6 +432,7 @@ def synthesize(
     enable_drift,
     end_chime,
     do_list_voices,
+    status_dir,
     verbose,
 ):
     """Synthesize speech with IndexTTS-2 (MLX).
@@ -520,6 +575,9 @@ def synthesize(
             _batch_iter = pending
 
         _file_wall_times: list[float] = []
+        _status_path = Path(status_dir) / "synth_status.json" if status_dir else None
+        if _status_path:
+            _status_path.parent.mkdir(parents=True, exist_ok=True)
 
         for _file_idx, inp in enumerate(_batch_iter):
             out_file = out_dir / (inp.stem + "." + ext)
@@ -603,8 +661,10 @@ def synthesize(
                     verbose=False,
                 )
 
+                _chunk_wall_times: list[float] = []
+
                 if verbose:
-                    _on_chunk, _on_chunk_done = _make_verbose_callbacks()
+                    _on_chunk, _on_chunk_done_base = _make_verbose_callbacks()
                     _chunk_bar = None
                 else:
                     _chunk_bar = None
@@ -623,7 +683,7 @@ def synthesize(
                             preview = chunk_text[:60].replace("\n", " ")
                             click.echo(f"  [{i+1}/{total}] {preview!r}")
 
-                    def _on_chunk_done(i, total, stats):
+                    def _on_chunk_done_base(i, total, stats):
                         if _chunk_bar is not None:
                             _chunk_bar.update(1)
                             _chunk_bar.set_postfix_str(
@@ -635,6 +695,26 @@ def synthesize(
                                 f"wall: {stats['wall_time_s']:.1f}s | "
                                 f"{stats['realtime_factor']:.1f}x realtime"
                             )
+
+                # Capture loop vars for closure
+                _cur_file_idx = _file_idx
+                _cur_inp_name = inp.name
+
+                def _on_chunk_done(i, total, stats, _fi=_cur_file_idx, _fn=_cur_inp_name):
+                    _chunk_wall_times.append(stats["wall_time_s"])
+                    _on_chunk_done_base(i, total, stats)
+                    if _status_path:
+                        _write_synth_status(
+                            _status_path,
+                            _fi,
+                            len(pending),
+                            _fn,
+                            False,
+                            i + 1,
+                            total,
+                            _file_wall_times,
+                            _chunk_wall_times,
+                        )
 
                 audio = synthesize_long(
                     input_text,
@@ -691,6 +771,18 @@ def synthesize(
                 else:
                     sf.write(str(out_file), audio, sample_rate)
                 _file_wall_times.append(time.monotonic() - _file_t0)
+                if _status_path:
+                    _write_synth_status(
+                        _status_path,
+                        _file_idx,
+                        len(pending),
+                        inp.name,
+                        True,
+                        len(_chunk_wall_times),
+                        len(_chunk_wall_times),
+                        _file_wall_times,
+                        _chunk_wall_times,
+                    )
                 click.echo(
                     f"  Saved {len(audio)/sample_rate:.2f}s → {out_file}"
                     + (f"  (wall: {_fmt_eta(_file_wall_times[-1])})" if verbose else "")

@@ -16,6 +16,7 @@ from cli.classify_emotions import classify_emotions
 from cli.extract import extract
 from cli.m4b import m4b
 from cli.download_weights import download_weights
+from cli.web import web
 
 
 @click.group()
@@ -28,6 +29,7 @@ main.add_command(classify_emotions)
 main.add_command(extract)
 main.add_command(m4b)
 main.add_command(download_weights)
+main.add_command(web)
 
 
 if __name__ == "__main__":
