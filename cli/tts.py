@@ -2,6 +2,7 @@
 """Command-line interface for IndexTTS-2 MLX."""
 
 import sys
+import time
 import subprocess
 from pathlib import Path
 import numpy as np
@@ -36,6 +37,52 @@ def _effective_emo_alpha(emo_alpha, emo_vector, emo_text, emo_audio_prompt):
     if emo_audio_prompt is not None and emo_alpha == 0.0:
         return 1.0
     return emo_alpha
+
+
+def _fmt_eta(seconds: float) -> str:
+    """Format a seconds value as a human-readable ETA string."""
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m}m{s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m{s:02d}s"
+
+
+def _make_verbose_callbacks():
+    """Return (on_chunk, on_chunk_done) callbacks that print per-chunk progress
+    with an ETA derived from the rolling mean wall-time per chunk."""
+    wall_times: list[float] = []
+
+    def on_chunk(i, total, chunk_text):
+        remaining = total - i
+        if wall_times:
+            mean_wall = sum(wall_times) / len(wall_times)
+            eta = _fmt_eta(mean_wall * remaining)
+            eta_str = f"  ETA ~{eta} ({remaining} chunk(s) left)"
+        else:
+            eta_str = f"  ({remaining} chunk(s) remaining)"
+        preview = chunk_text[:60].replace("\n", " ")
+        click.echo(f"  [{i+1}/{total}] {preview!r}{eta_str}")
+
+    def on_chunk_done(i, total, stats):
+        wall_times.append(stats["wall_time_s"])
+        mean_wall = sum(wall_times) / len(wall_times)
+        remaining = total - (i + 1)
+        eta_str = (
+            f"  ETA ~{_fmt_eta(mean_wall * remaining)} ({remaining} left)"
+            if remaining > 0
+            else "  done"
+        )
+        click.echo(
+            f"         audio: {stats['audio_duration_s']:.2f}s | "
+            f"wall: {stats['wall_time_s']:.1f}s | "
+            f"{stats['realtime_factor']:.1f}x realtime |{eta_str}"
+        )
+
+    return on_chunk, on_chunk_done
 
 
 # ── shared options ─────────────────────────────────────────────────────────────
@@ -472,9 +519,21 @@ def synthesize(
         except ImportError:
             _batch_iter = pending
 
-        for inp in _batch_iter:
+        _file_wall_times: list[float] = []
+
+        for _file_idx, inp in enumerate(_batch_iter):
             out_file = out_dir / (inp.stem + "." + ext)
-            click.echo(f"\n{inp.name} → {out_file.name}")
+            _files_remaining = len(pending) - _file_idx
+            if verbose and _file_wall_times:
+                _mean_file = sum(_file_wall_times) / len(_file_wall_times)
+                _file_eta = _fmt_eta(_mean_file * _files_remaining)
+                click.echo(
+                    f"\n[{_file_idx+1}/{len(pending)}] {inp.name} → {out_file.name}"
+                    f"  (ETA ~{_file_eta} for {_files_remaining} file(s))"
+                )
+            else:
+                click.echo(f"\n[{_file_idx+1}/{len(pending)}] {inp.name} → {out_file.name}")
+            _file_t0 = time.monotonic()
 
             if inp.suffix.lower() == ".jsonl":
                 # render_segments_jsonl always writes WAV; use a temp path then convert
@@ -521,6 +580,11 @@ def synthesize(
                         out_file.write_bytes(
                             (np.clip(wav_audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
                         )
+                _file_wall_times.append(time.monotonic() - _file_t0)
+                click.echo(
+                    f"  Saved → {out_file}"
+                    + (f"  (wall: {_fmt_eta(_file_wall_times[-1])})" if verbose else "")
+                )
             else:
                 # Plain text → synthesize_long
                 input_text = inp.read_text(encoding="utf-8")
@@ -539,38 +603,38 @@ def synthesize(
                     verbose=False,
                 )
 
-                _chunk_bar = None
+                if verbose:
+                    _on_chunk, _on_chunk_done = _make_verbose_callbacks()
+                    _chunk_bar = None
+                else:
+                    _chunk_bar = None
 
-                def _on_chunk(i, total, chunk_text):
-                    nonlocal _chunk_bar
-                    if verbose:
-                        preview = chunk_text[:60].replace("\n", " ")
-                        click.echo(f"  [{i+1}/{total}] {preview!r}")
-                        return
-                    try:
-                        from tqdm import tqdm as _tqdm
+                    def _on_chunk(i, total, chunk_text):
+                        nonlocal _chunk_bar
+                        try:
+                            from tqdm import tqdm as _tqdm
 
-                        if _chunk_bar is None:
-                            _chunk_bar = _tqdm(
-                                total=total, desc="  chunks", unit="chunk", leave=False
+                            if _chunk_bar is None:
+                                _chunk_bar = _tqdm(
+                                    total=total, desc="  chunks", unit="chunk", leave=False
+                                )
+                            _chunk_bar.set_postfix_str(chunk_text[:40].replace("\n", " "))
+                        except ImportError:
+                            preview = chunk_text[:60].replace("\n", " ")
+                            click.echo(f"  [{i+1}/{total}] {preview!r}")
+
+                    def _on_chunk_done(i, total, stats):
+                        if _chunk_bar is not None:
+                            _chunk_bar.update(1)
+                            _chunk_bar.set_postfix_str(
+                                f"{stats['audio_duration_s']:.1f}s | {stats['realtime_factor']:.1f}x"
                             )
-                        _chunk_bar.set_postfix_str(chunk_text[:40].replace("\n", " "))
-                    except ImportError:
-                        preview = chunk_text[:60].replace("\n", " ")
-                        click.echo(f"  [{i+1}/{total}] {preview!r}")
-
-                def _on_chunk_done(i, total, stats):
-                    if _chunk_bar is not None:
-                        _chunk_bar.update(1)
-                        _chunk_bar.set_postfix_str(
-                            f"{stats['audio_duration_s']:.1f}s | {stats['realtime_factor']:.1f}x"
-                        )
-                    else:
-                        click.echo(
-                            f"         audio: {stats['audio_duration_s']:.2f}s | "
-                            f"wall: {stats['wall_time_s']:.1f}s | "
-                            f"{stats['realtime_factor']:.1f}x realtime"
-                        )
+                        else:
+                            click.echo(
+                                f"         audio: {stats['audio_duration_s']:.2f}s | "
+                                f"wall: {stats['wall_time_s']:.1f}s | "
+                                f"{stats['realtime_factor']:.1f}x realtime"
+                            )
 
                 audio = synthesize_long(
                     input_text,
@@ -626,7 +690,11 @@ def synthesize(
                     )
                 else:
                     sf.write(str(out_file), audio, sample_rate)
-                click.echo(f"  Saved {len(audio)/sample_rate:.2f}s → {out_file}")
+                _file_wall_times.append(time.monotonic() - _file_t0)
+                click.echo(
+                    f"  Saved {len(audio)/sample_rate:.2f}s → {out_file}"
+                    + (f"  (wall: {_fmt_eta(_file_wall_times[-1])})" if verbose else "")
+                )
 
         click.echo(f"\nBatch complete: {len(pending)} file(s) written to {out_dir}")
         return
@@ -711,22 +779,7 @@ def synthesize(
         verbose=False,  # callbacks below handle all progress output
     )
 
-    chunk_start_times: list = []
-
-    def _on_chunk(i, total, chunk_text):
-        preview = chunk_text[:60].replace("\n", " ")
-        click.echo(f"  [{i+1}/{total}] {preview!r}")
-        chunk_start_times.append(i)  # just a marker; timing is in on_chunk_done
-
-    def _on_chunk_done(i, total, stats):
-        audio_dur = stats["audio_duration_s"]
-        wall_time = stats["wall_time_s"]
-        rtf = stats["realtime_factor"]
-        click.echo(
-            f"         audio: {audio_dur:.2f}s | "
-            f"wall: {wall_time:.1f}s | "
-            f"{rtf:.1f}x realtime"
-        )
+    _on_chunk, _on_chunk_done = _make_verbose_callbacks()
 
     audio = synthesize_long(
         input_text,
