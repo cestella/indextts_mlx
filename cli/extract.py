@@ -46,7 +46,9 @@ import click
     help="Also write an all_chapters.txt that concatenates every chapter.",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Print per-chapter details.")
-def extract(epub_file, output_dir, use_toc, min_words, sentence_per_line, language, combined, verbose):
+def extract(
+    epub_file, output_dir, use_toc, min_words, sentence_per_line, language, combined, verbose
+):
     """Extract chapters from EPUB_FILE and write them as .txt files into OUTPUT_DIR.
 
     Each chapter is written as chapter_NN_<title>.txt.  Footnotes, tables,
@@ -62,8 +64,7 @@ def extract(epub_file, output_dir, use_toc, min_words, sentence_per_line, langua
         from indextts_mlx.epub_extractor import EPUBParser
     except ImportError as e:
         raise click.ClickException(
-            f"Missing dependency: {e}\n"
-            "Install with: pip install ebooklib beautifulsoup4 lxml"
+            f"Missing dependency: {e}\n" "Install with: pip install ebooklib beautifulsoup4 lxml"
         )
 
     epub_path = Path(epub_file)
@@ -101,6 +102,7 @@ def extract(epub_file, output_dir, use_toc, min_words, sentence_per_line, langua
 
     try:
         import ftfy as _ftfy
+
         _fix_text = _ftfy.fix_text
     except ImportError:
         _fix_text = lambda t: t  # noqa: E731

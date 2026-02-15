@@ -216,9 +216,10 @@ class TestJoyfulCases:
         result = one(
             clf, context, "They held each other for a long time, laughing and crying at once."
         )
-        assert result in ("joyful", "melancholic"), (
-            f"Expected joyful or melancholic (bittersweet reunion), got {result!r}"
-        )
+        assert result in (
+            "joyful",
+            "melancholic",
+        ), f"Expected joyful or melancholic (bittersweet reunion), got {result!r}"
 
     def test_acceptance_after_years_of_trying(self, clf):
         context = (
@@ -231,9 +232,10 @@ class TestJoyfulCases:
             context,
             "She had been accepted — after years of trying, she had finally been accepted.",
         )
-        assert result in ("joyful", "mild_emphasis"), (
-            f"Expected joyful or mild_emphasis, got {result!r}"
-        )
+        assert result in (
+            "joyful",
+            "mild_emphasis",
+        ), f"Expected joyful or mild_emphasis, got {result!r}"
 
 
 # ---------------------------------------------------------------------------

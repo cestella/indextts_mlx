@@ -465,9 +465,16 @@ def synthesize(
         click.echo(f"Loading models from {config.weights_dir}...")
         tts = IndexTTS2(config=config)
 
-        for idx, inp in enumerate(pending):
+        try:
+            from tqdm import tqdm as _tqdm
+
+            _batch_iter = pending if verbose else _tqdm(pending, desc="batch", unit="file")
+        except ImportError:
+            _batch_iter = pending
+
+        for inp in _batch_iter:
             out_file = out_dir / (inp.stem + "." + ext)
-            click.echo(f"\n[{idx+1}/{len(pending)}] {inp.name} → {out_file.name}")
+            click.echo(f"\n{inp.name} → {out_file.name}")
 
             if inp.suffix.lower() == ".jsonl":
                 # render_segments_jsonl always writes WAV; use a temp path then convert
@@ -532,16 +539,38 @@ def synthesize(
                     verbose=False,
                 )
 
+                _chunk_bar = None
+
                 def _on_chunk(i, total, chunk_text):
-                    preview = chunk_text[:60].replace("\n", " ")
-                    click.echo(f"  [{i+1}/{total}] {preview!r}")
+                    nonlocal _chunk_bar
+                    if verbose:
+                        preview = chunk_text[:60].replace("\n", " ")
+                        click.echo(f"  [{i+1}/{total}] {preview!r}")
+                        return
+                    try:
+                        from tqdm import tqdm as _tqdm
+
+                        if _chunk_bar is None:
+                            _chunk_bar = _tqdm(
+                                total=total, desc="  chunks", unit="chunk", leave=False
+                            )
+                        _chunk_bar.set_postfix_str(chunk_text[:40].replace("\n", " "))
+                    except ImportError:
+                        preview = chunk_text[:60].replace("\n", " ")
+                        click.echo(f"  [{i+1}/{total}] {preview!r}")
 
                 def _on_chunk_done(i, total, stats):
-                    click.echo(
-                        f"         audio: {stats['audio_duration_s']:.2f}s | "
-                        f"wall: {stats['wall_time_s']:.1f}s | "
-                        f"{stats['realtime_factor']:.1f}x realtime"
-                    )
+                    if _chunk_bar is not None:
+                        _chunk_bar.update(1)
+                        _chunk_bar.set_postfix_str(
+                            f"{stats['audio_duration_s']:.1f}s | {stats['realtime_factor']:.1f}x"
+                        )
+                    else:
+                        click.echo(
+                            f"         audio: {stats['audio_duration_s']:.2f}s | "
+                            f"wall: {stats['wall_time_s']:.1f}s | "
+                            f"{stats['realtime_factor']:.1f}x realtime"
+                        )
 
                 audio = synthesize_long(
                     input_text,
@@ -567,12 +596,28 @@ def synthesize(
                     on_chunk=_on_chunk,
                     on_chunk_done=_on_chunk_done,
                 )
+                if _chunk_bar is not None:
+                    _chunk_bar.close()
                 if sample_rate != 22050:
                     import librosa as _librosa
 
                     audio = _librosa.resample(audio, orig_sr=22050, target_sr=sample_rate).astype(
                         np.float32
                     )
+                if end_chime is not None:
+                    chime_audio, chime_sr = sf.read(str(end_chime), dtype="float32")
+                    if chime_audio.ndim > 1:
+                        chime_audio = chime_audio.mean(axis=1)
+                    chime_audio = chime_audio.ravel()
+                    if chime_sr != sample_rate:
+                        import librosa as _librosa
+
+                        chime_audio = (
+                            _librosa.resample(chime_audio, orig_sr=chime_sr, target_sr=sample_rate)
+                            .astype(np.float32)
+                            .ravel()
+                        )
+                    audio = np.concatenate([audio, chime_audio])
                 if ext == "mp3":
                     _write_mp3(audio, sample_rate, out_file)
                 elif ext == "pcm":

@@ -63,6 +63,7 @@ class EPUBParser:
         """
         import warnings
         from bs4 import XMLParsedAsHTMLWarning
+
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
             return BeautifulSoup(html_content, "lxml")
@@ -127,7 +128,9 @@ class EPUBParser:
             txt = a.get_text(strip=True)
             if txt and (txt.isdigit() or txt in {"*", "†", "‡"}):
                 # only delete if it looks like a reference, not a normal numeric link
-                if a.get("class") and any(self.NOTE_LIKE_CLASS_RE.search(c) for c in a.get("class", [])):
+                if a.get("class") and any(
+                    self.NOTE_LIKE_CLASS_RE.search(c) for c in a.get("class", [])
+                ):
                     a.decompose()
 
     def _strip_non_narration_elements(self, soup: BeautifulSoup) -> None:
@@ -292,9 +295,8 @@ class EPUBParser:
 
         for item in self.book.get_items():
             if (
-                (item.get_name() == href or item.get_id() == href)
-                and item.get_type() == ebooklib.ITEM_DOCUMENT
-            ):
+                item.get_name() == href or item.get_id() == href
+            ) and item.get_type() == ebooklib.ITEM_DOCUMENT:
                 html_content = item.get_content().decode("utf-8", errors="ignore")
                 return self.extract_text_from_html(html_content)
 
@@ -332,9 +334,7 @@ class EPUBParser:
             if not title:
                 title = f"Section {chapter_num}"
                 if item_name:
-                    name_parts = (
-                        Path(item_name).stem.replace("_", " ").replace("-", " ")
-                    ).strip()
+                    name_parts = (Path(item_name).stem.replace("_", " ").replace("-", " ")).strip()
                     if name_parts and not name_parts.isdigit():
                         title = name_parts.title()
 
@@ -436,4 +436,3 @@ class EPUBParser:
                 f.write(f"{'=' * 50}\n\n")
                 f.write(chapter.content)
                 f.write("\n")
-

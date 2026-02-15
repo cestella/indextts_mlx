@@ -1,12 +1,12 @@
 # indextts-mlx
 
-IndexTTS-2 text-to-speech inference on Apple Silicon via [MLX](https://github.com/ml-explore/mlx). No PyTorch dependency.
+IndexTTS-2 text-to-speech inference on Apple Silicon via [MLX](https://github.com/ml-explore/mlx). No PyTorch dependency at runtime.
 
 ## Requirements
 
 - Apple Silicon Mac (M1/M2/M3/M4)
 - Python 3.11 or 3.12 recommended (required for NeMo/spaCy compatibility; 3.10+ for core synthesis only)
-- IndexTTS-2 model weights converted to `.npz` format
+- IndexTTS-2 model weights converted to `.npz` format (see [Weights](#weights))
 
 ## Installation
 
@@ -28,8 +28,7 @@ pip install -e ".[dev]"
 
 ### Automatic download and conversion (recommended)
 
-`indextts-download-weights` downloads all source checkpoints from HuggingFace
-and converts them to the `.npz` format required by the MLX engine in one step.
+`indextts download-weights` downloads all source checkpoints from HuggingFace and converts them to the `.npz` format required by the MLX engine in one step.
 
 **Install conversion dependencies first:**
 
@@ -41,13 +40,13 @@ pip install huggingface_hub safetensors
 **Run the downloader:**
 
 ```bash
-indextts-download-weights --out-dir ~/indextts_weights
+indextts download-weights --out-dir ~/indextts_weights
 ```
 
 Or with a separate download cache (useful for re-running without re-downloading):
 
 ```bash
-indextts-download-weights --out-dir ~/indextts_weights --cache-dir ~/indextts_cache
+indextts download-weights --out-dir ~/indextts_weights --cache-dir ~/indextts_cache
 ```
 
 Models downloaded and converted:
@@ -64,7 +63,7 @@ Models downloaded and converted:
 | `amphion/MaskGCT` | `semantic_codec/model.safetensors` | `semantic_codec.npz` |
 | `nvidia/bigvgan_v2_22khz_80band_256x` | `bigvgan_generator.pt` | `bigvgan.npz` |
 
-After the download completes, point `indextts-tts` at the output directory:
+After the download completes, point the CLI at the output directory:
 
 ```bash
 export INDEXTTS_MLX_WEIGHTS_DIR=~/indextts_weights
@@ -73,11 +72,7 @@ export INDEXTTS_MLX_WEIGHTS_DIR=~/indextts_weights
 
 ### Manual weights
 
-All model weights must be in `.npz` format in a single directory. The default location is:
-
-```
-~/code/index-tts-m3-port/prototypes/s2mel_mlx/mlx_weights/
-```
+All model weights must be in `.npz` format in a single directory. The default location is read from `INDEXTTS_MLX_WEIGHTS_DIR` (see [Configuration](#configuration)).
 
 Required files:
 
@@ -98,13 +93,15 @@ Optional files (enable `--emo-vector` and `--emo-text`):
 | `emotion_matrix.npz` | 73×1280 per-category emotion direction vectors |
 | `speaker_matrix.npz` | 73×192 speaker-similarity lookup matrix |
 
-You also need a SentencePiece BPE tokenizer model (default: `~/code/tts/index-tts/checkpoints/bpe.model`).
+You also need a SentencePiece BPE tokenizer model. Default: `~/code/tts/index-tts/checkpoints/bpe.model` (override with `INDEXTTS_MLX_BPE_MODEL`).
 
-For `--emo-text`, the fine-tuned Qwen3-0.6B emotion classifier must be present (default: `~/code/tts/index-tts/checkpoints/qwen0.6bemo4-merge`).
+For `--emo-text`, the fine-tuned Qwen3-0.6B emotion classifier must be present. Default: `~/code/tts/index-tts/checkpoints/qwen0.6bemo4-merge` (override with `INDEXTTS_MLX_QWEN_EMO`).
 
-### Long-text synthesis / sentence segmentation (optional)
+## Optional dependencies
 
-`synthesize_long()` chunks arbitrary-length text into sentences using spaCy. Install spaCy, the language model, and optionally pySBD for better abbreviation handling:
+### Sentence segmentation (long-text synthesis + EPUB extract)
+
+`synthesize_long()` and `indextts extract` use spaCy for sentence boundary detection. Install spaCy and the appropriate language model:
 
 ```bash
 pip install -e ".[long]"                          # installs spacy + pysbd
@@ -116,9 +113,9 @@ python -m spacy download de_core_news_sm          # German
 python -m spacy download pt_core_news_sm          # Portuguese
 ```
 
-### Text normalization (optional)
+### Text normalization
 
-`synthesize_long()` can normalize text before synthesis (numbers → words, currency, dates, etc.) using [NeMo Text Processing](https://github.com/NVIDIA/NeMo-text-processing). Normalization is entirely optional — if `nemo_text_processing` is not installed, `synthesize_long()` silently skips it.
+`synthesize_long()` can normalize text before synthesis (numbers → words, currency, dates, etc.) using [NeMo Text Processing](https://github.com/NVIDIA/NeMo-text-processing). Normalization is optional — if `nemo_text_processing` is not installed it is silently skipped.
 
 **Linux:** prebuilt wheels are available:
 
@@ -126,62 +123,84 @@ python -m spacy download pt_core_news_sm          # Portuguese
 pip install pynini nemo_text_processing
 ```
 
-**macOS:** `pynini` must be compiled against OpenFst. Requires Python 3.11 or 3.12 (pynini does not yet support 3.13+).
+**macOS:** `pynini` must be compiled against OpenFst. Requires Python 3.11 or 3.12.
 
-1. **Install OpenFst via Homebrew:**
+1. **Install OpenFst:**
    ```bash
    brew install openfst
    ```
 
-2. **Verify the prefix:**
-   ```bash
-   brew --prefix openfst
-   # Expected: /opt/homebrew/opt/openfst
-   ```
-
-3. **Build pynini with the correct flags:**
+2. **Build pynini:**
    ```bash
    export CFLAGS="-I/opt/homebrew/opt/openfst/include"
    export CXXFLAGS="-I/opt/homebrew/opt/openfst/include"
    export LDFLAGS="-L/opt/homebrew/opt/openfst/lib"
-
    pip install --no-cache-dir pynini
    ```
 
-   > **Note:** `nemo_text_processing` declares a dependency on `pynini==2.1.6.post1`, but that version does not build against OpenFst 1.8+. Install `pynini` without a version pin (gets 2.1.7+) and ignore the version warning — it works fine at runtime.
+   > **Note:** `nemo_text_processing` pins `pynini==2.1.6.post1`, which does not build against OpenFst 1.8+. Install without a version pin and ignore the warning — it works at runtime.
 
-4. **Install nemo_text_processing:**
+3. **Install nemo_text_processing:**
    ```bash
    pip install --no-deps nemo_text_processing
    pip install sacremoses cdifflib editdistance inflect joblib pandas regex transformers wget
    ```
 
-5. **Verify:**
+4. **Verify:**
    ```bash
    python -c "from nemo_text_processing.text_normalization.normalize import Normalizer; print('ok')"
    ```
 
-**Troubleshooting:**
-- If OpenFst headers are not found: `ls /opt/homebrew/opt/openfst/include/fst/` — if empty, try `brew reinstall openfst`.
-- On older Intel Macs: replace `/opt/homebrew` with `/usr/local`.
-- All three environment variables (CFLAGS, CXXFLAGS, LDFLAGS) must be set before running pip.
+### M4B audiobook packaging
 
-Override defaults with environment variables:
+`indextts m4b` requires `m4b-tool` (wraps `ffmpeg`):
 
 ```bash
-export INDEXTTS_MLX_WEIGHTS_DIR=/path/to/weights
-export INDEXTTS_MLX_BPE_MODEL=/path/to/bpe.model
-export INDEXTTS_MLX_QWEN_EMO=/path/to/qwen0.6bemo4-merge
+brew install m4b-tool
 ```
+
+`isbnlib` (for ISBN metadata lookup) is included in the package dependencies.
+
+### EPUB extraction
+
+`indextts extract` requires `ebooklib`, `beautifulsoup4`, and `lxml`, all of which are included in the package dependencies. spaCy (see above) is required for `--sentence-per-line` (the default).
+
+## Configuration
+
+All paths can be set via environment variables; constructor arguments take precedence.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INDEXTTS_MLX_WEIGHTS_DIR` | `~/code/index-tts-m3-port/prototypes/s2mel_mlx/mlx_weights/` | Directory of `.npz` weight files |
+| `INDEXTTS_MLX_BPE_MODEL` | `~/code/tts/index-tts/checkpoints/bpe.model` | SentencePiece BPE tokenizer |
+| `INDEXTTS_MLX_QWEN_EMO` | `~/code/tts/index-tts/checkpoints/qwen0.6bemo4-merge` | Qwen3-0.6B emotion classifier (optional) |
 
 ## CLI
 
-All text input is automatically run through the full pipeline:
-**normalize → segment at sentence boundaries → synthesize → stitch**.
+All commands are subcommands of the unified `indextts` entry point:
 
 ```
-indextts-tts --text "..." [OPTIONS]
-indextts-tts --file chapter.txt [OPTIONS]
+indextts synthesize       Text-to-speech synthesis
+indextts classify-emotions  Classify emotions for JSONL pipeline preparation
+indextts extract          Extract plain-text chapters from an EPUB
+indextts m4b              Package audio chapters into a .m4b audiobook
+indextts download-weights Download and convert all model weights from HuggingFace
+```
+
+Run `indextts <command> --help` for full option listings.
+
+---
+
+### `indextts synthesize`
+
+Synthesizes speech from text or a file. All input is automatically run through:
+**normalize → segment at sentence boundaries → synthesize → stitch**.
+
+```bash
+indextts synthesize --text "Hello, world." --spk-audio-prompt speaker.wav
+indextts synthesize --file chapter01.txt --voices-dir ~/voices --voice Emma --out ch01.wav
+indextts synthesize --file chapter01.jsonl --voices-dir ~/voices --out chapter01.wav
+indextts synthesize --file ~/chapters --out ~/audio --out-ext mp3 --voices-dir ~/voices --voice Emma
 ```
 
 **Input (pick one):**
@@ -189,7 +208,13 @@ indextts-tts --file chapter.txt [OPTIONS]
 | Flag | Description |
 |------|-------------|
 | `--text TEXT` | Inline text to synthesize |
-| `--file PATH` | UTF-8 text file to synthesize |
+| `--file PATH` | UTF-8 `.txt` file, `.jsonl` segments file, or directory of input files |
+
+**Directory batch mode** (`--file DIR --out DIR`): processes every `.txt` and `.jsonl` file in the input directory, skipping files whose output already exists in the output directory.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--out-ext wav\|mp3\|pcm` | `mp3` | Output format for directory batch mode |
 
 **Text pipeline controls:**
 
@@ -197,11 +222,11 @@ indextts-tts --file chapter.txt [OPTIONS]
 |------|---------|-------------|
 | `--normalize / --no-normalize` | on | Run NeMo text normalization (numbers, dates, currency → spoken form) |
 | `--language TEXT` | `english` | Language for normalization and segmentation |
-| `--token-target INT` | `250` | BPE tokens per synthesis chunk (~2–3 sentences); chunks always break on sentence boundaries, never mid-sentence (GPT hard max ~600) |
-| `--silence-ms INT` | `300` | Silence in ms between chunks (used when `--crossfade-ms 0`) |
+| `--token-target INT` | `250` | BPE tokens per synthesis chunk (~2–3 sentences); chunks always break on sentence boundaries |
+| `--silence-ms INT` | `300` | Silence in ms between chunks |
 | `--crossfade-ms INT` | `10` | Linear crossfade overlap in ms between chunks; replaces silence when non-zero |
 
-**Speaker source (pick one; `--spk-audio-prompt` takes priority):**
+**Speaker source (pick one; `--spk-audio-prompt` wins):**
 
 | Flag | Description |
 |------|-------------|
@@ -213,9 +238,9 @@ indextts-tts --file chapter.txt [OPTIONS]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--emotion FLOAT` | `1.0` | Internal emo-vec scale: 0.0 = neutral, 1.0 = default, 2.0 = expressive |
-| `--emo-vector "f,f,f,f,f,f,f,f"` | — | 8 comma-separated floats: `happy,angry,sad,afraid,disgusted,melancholic,surprised,calm` |
-| `--emo-alpha FLOAT` | `0.0` | Blend strength for `--emo-audio-prompt` (0 = no blend, 1 = full) |
-| `--emo-text TEXT` | — | Natural-language emotion description; classified by Qwen3-0.6B into an `--emo-vector` automatically |
+| `--emo-vector "f,…,f"` | — | 8 comma-separated floats: `happy,angry,sad,afraid,disgusted,melancholic,surprised,calm` |
+| `--emo-alpha FLOAT` | `0.0` | Blend strength for `--emo-audio-prompt` (0 = off, 1 = full blend) |
+| `--emo-text TEXT` | — | Natural-language emotion description; auto-classified into an `--emo-vector` by Qwen3-0.6B |
 | `--emo-audio-prompt PATH` | — | Reference audio whose emotional character is blended in |
 
 **Determinism:**
@@ -223,7 +248,7 @@ indextts-tts --file chapter.txt [OPTIONS]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--seed INT` | — | Random seed (default 0 when `--no-use-random`) |
-| `--no-use-random` | on | Deterministic output (default; good for audiobooks) |
+| `--no-use-random` | on | Deterministic output (recommended for audiobooks) |
 | `--use-random` | — | Non-deterministic sampling |
 
 **Quality / output:**
@@ -238,49 +263,139 @@ indextts-tts --file chapter.txt [OPTIONS]
 | `--max-codes INT` | `1500` | Maximum GPT tokens (caps output length) |
 | `--gpt-temperature FLOAT` | `0.8` | GPT sampling temperature |
 | `--top-k INT` | `30` | Top-k for GPT sampling |
-| `--sample-rate INT` | `22050` | Output sample rate (resamples if != 22050) |
-| `--audio-format wav\|pcm` | `wav` | Output format |
+| `--sample-rate INT` | `22050` | Output sample rate (resamples if ≠ 22050) |
 | `--play` | — | Play output via `afplay` after synthesis (macOS) |
 | `--weights-dir PATH` | — | Override weights directory |
 | `--bpe-model PATH` | — | Override BPE model path |
 
-**Audiobook / JSONL chapter mode:**
+**JSONL chapter mode extras:**
 
 | Flag | Description |
 |------|-------------|
-| `--segments-jsonl PATH` | JSONL file; each line is a segment with `text`, optional per-segment overrides |
 | `--cache-dir PATH` | Cache directory for segment audio (SHA-256 keyed; re-renders are free) |
+| `--emotion-config PATH` | Path to `emotions.json` preset config (auto-detected from `--voices-dir` if not set) |
+| `--enable-drift` | Apply bounded per-segment drift to emotion vectors |
+| `--end-chime PATH` | Audio file appended to the end of the chapter (resampled if needed) |
 | `--list-voices` | List available voice names in `--voices-dir` and exit |
 
-**Examples:**
+---
+
+### `indextts classify-emotions`
+
+Classifies emotions for each sentence in a plain-text chapter file and writes a JSONL segments file suitable for use with `indextts synthesize --file`.
 
 ```bash
-# Basic synthesis (inline text)
-indextts-tts --text "Hello, world." --spk-audio-prompt speaker.wav
-
-# Synthesize a text file
-indextts-tts --file chapter01.txt --voices-dir ~/voices --voice Emma --out ch01.wav
-
-# Disable normalization (text already in spoken form)
-indextts-tts --text "forty two" --spk-audio-prompt speaker.wav --no-normalize
-
-# French text file
-indextts-tts --file histoire.txt --language french --spk-audio-prompt speaker.wav
-
-# Emotion via text description (uses Qwen3-0.6B classifier)
-indextts-tts --text "What a day!" --spk-audio-prompt speaker.wav --emo-text "joyful and excited"
-
-# Emotion via explicit vector (happy=0.8, calm=0.2)
-indextts-tts --text "What a day!" --spk-audio-prompt speaker.wav \
-    --emo-vector "0.8,0,0,0,0,0,0,0.2"
-
-# High-quality deterministic render
-indextts-tts --file chapter01.txt --spk-audio-prompt speaker.wav \
-    --steps 25 --seed 42 --no-use-random --out chapter01.wav
-
-# JSONL chapter render
-indextts-tts --segments-jsonl chapter01.jsonl --voices-dir ~/voices --out chapter01.wav
+indextts classify-emotions chapter01.txt chapter01.jsonl
+indextts classify-emotions chapter01.txt chapter01.jsonl --model mlx-community/Qwen2.5-32B-Instruct-4bit
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model TEXT` | *(ClassifierConfig default)* | MLX-LM model repo ID or local path |
+| `--chapter-id TEXT` | — | Optional chapter identifier written to every JSONL record |
+| `--language TEXT` | `english` | Language for sentence segmentation |
+| `--context-window INT` | `5` | Surrounding sentences included as paragraph context |
+| `--hysteresis-min-run INT` | `2` | Minimum consecutive non-neutral predictions to keep an emotion label |
+| `--max-retries INT` | `3` | Retries per sentence if the model returns an invalid token |
+| `--quiet` | — | Suppress per-sentence progress output |
+
+Each output line is a JSONL segment record conforming to `schemas/segment.schema.json`.
+
+---
+
+### `indextts extract`
+
+Extracts chapters from an EPUB file as plain-text `.txt` files. Strips footnotes, tables, code blocks, images, and other non-narration elements. Optionally runs spaCy sentence segmentation so the output has one sentence per line — the format expected by `indextts synthesize --file`.
+
+```bash
+# Extract to plain text, one sentence per line (default)
+indextts extract book.epub ~/chapters/
+
+# Verbose — show per-chapter word counts
+indextts extract book.epub ~/chapters/ -v
+
+# Force spine order instead of TOC
+indextts extract book.epub ~/chapters/ --no-toc
+
+# Also write a combined all_chapters.txt
+indextts extract book.epub ~/chapters/ --combined
+
+# Skip sentence segmentation (raw paragraph text)
+indextts extract book.epub ~/chapters/ --no-sentence-per-line
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--toc / --no-toc` | `--toc` | Use the book's Table of Contents; falls back to spine order if TOC yields < 3 chapters |
+| `--min-words INT` | `100` | Minimum word count for a spine item to be kept as a chapter |
+| `--sentence-per-line / --no-sentence-per-line` | on | Run spaCy sentence segmentation; one sentence per line in output |
+| `--language TEXT` | `english` | Language for spaCy segmentation |
+| `--combined / --no-combined` | off | Also write `all_chapters.txt` concatenating every chapter |
+| `-v / --verbose` | — | Print per-chapter title and word count |
+
+Output files are named `chapter_NN_<title>.txt`. Front and back matter (contents, index, notes, acknowledgments, copyright, etc.) are automatically excluded.
+
+**Typical audiobook workflow:**
+
+```bash
+# 1. Extract EPUB to per-chapter text files
+indextts extract book.epub ~/chapters/ -v
+
+# 2. Classify emotions for each chapter
+for f in ~/chapters/chapter_*.txt; do
+    indextts classify-emotions "$f" "${f%.txt}.jsonl"
+done
+
+# 3. Synthesize each chapter
+indextts synthesize --file ~/chapters --out ~/audio --out-ext mp3 \
+    --voices-dir ~/voices --voice Emma
+
+# 4. Package into M4B
+indextts m4b --isbn 9780743273565 --chapters-dir ~/audio --out ~/audiobooks
+```
+
+---
+
+### `indextts m4b`
+
+Packages a directory of audio chapter files into a `.m4b` audiobook. Fetches book metadata (title, author, year, cover art, description) from an ISBN lookup and invokes `m4b-tool`.
+
+```bash
+indextts m4b --isbn 9780743273565 --chapters-dir ~/audio/chapters --out ~/audiobooks
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--isbn TEXT` | *(required)* | ISBN-10 or ISBN-13 for metadata and cover art lookup |
+| `--chapters-dir PATH` | *(required)* | Directory of audio chapter files (mp3, m4a, wav, …) |
+| `--out PATH` | *(required)* | Output directory where the `.m4b` file will be written |
+| `--bitrate TEXT` | `64k` | Audio bitrate passed to `m4b-tool` |
+| `--jobs TEXT` | `4` | Parallel encoding jobs |
+| `--use-filenames-as-chapters / --no-use-filenames-as-chapters` | on | Pass `--use-filenames-as-chapters` to `m4b-tool` |
+| `--m4b-arg KEY=VALUE` | — | Extra arguments forwarded to `m4b-tool` (repeatable) |
+| `-v / --verbose` | — | Print `m4b-tool` output |
+
+Requires `m4b-tool`: `brew install m4b-tool`.
+
+---
+
+### `indextts download-weights`
+
+Downloads all required model weights from HuggingFace and converts them to `.npz` format.
+
+```bash
+indextts download-weights --out-dir ~/indextts_weights
+indextts download-weights --out-dir ~/indextts_weights --cache-dir ~/indextts_cache
+```
+
+Requires `torch`, `huggingface_hub`, and `safetensors`:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install huggingface_hub safetensors
+```
+
+---
 
 ## Python API
 
@@ -290,7 +405,7 @@ indextts-tts --segments-jsonl chapter01.jsonl --voices-dir ~/voices --out chapte
 from indextts_mlx import IndexTTS2
 import soundfile as sf
 
-tts = IndexTTS2()  # loads all models once
+tts = IndexTTS2()   # loads all models once
 
 audio = tts.synthesize(
     text="Hello, world.",
@@ -315,11 +430,8 @@ audio = tts.synthesize(
 
     # Speaker source — pick one (spk_audio_prompt wins if both given)
     spk_audio_prompt="speaker.wav",   # str, Path, or np.ndarray
-    voices_dir="~/voices",            # directory of .wav files
+    voices_dir="~/voices",
     voice="Emma",                     # resolved to voices_dir/Emma.wav
-
-    # Backward-compat alias for spk_audio_prompt
-    reference_audio=None,
 
     # Emotion controls
     emotion=1.0,            # internal emo-vec scale (0=neutral, 2=expressive)
@@ -344,11 +456,7 @@ audio = tts.synthesize(
 ) -> np.ndarray             # float32, mono, 22050 Hz
 ```
 
-**Speaker resolution priority:** `spk_audio_prompt` > `voice + voices_dir` > error.
-`reference_audio` is a backward-compat alias; `spk_audio_prompt` wins if both are supplied.
-
-**Emotion resolution priority:** `emo_vector` > `emo_text` (when both given, `emo_vector` wins and a warning is issued).
-`emo_text` auto-enables `use_emo_text` when provided.
+**Emotion resolution priority:** `emo_vector` > `emo_text` (when both given, `emo_vector` wins and a warning is issued). `emo_text` auto-enables `use_emo_text`.
 
 **Emotion controls explained:**
 
@@ -357,7 +465,7 @@ audio = tts.synthesize(
 | `emotion` | Scales the audio-derived emotion vector. Works standalone — no extra files needed. |
 | `emo_vector` | 8-float blend of per-category emotion directions from `emotion_matrix.npz`. Requires `emotion_matrix.npz` + `speaker_matrix.npz`. |
 | `emo_text` | Natural-language description classified by Qwen3-0.6B into an `emo_vector`. Requires the Qwen checkpoint. |
-| `emo_audio_prompt` + `emo_alpha` | Blends the speaker's own emotion vector with that of a reference audio clip: `base + alpha * (ref - base)`. |
+| `emo_audio_prompt` + `emo_alpha` | Blends the speaker's emotion vector with that of a reference audio clip: `base + alpha * (ref - base)`. |
 
 ### `WeightsConfig`
 
@@ -372,8 +480,6 @@ config = WeightsConfig(
 )
 tts = IndexTTS2(config=config)
 ```
-
-Fields can also be set via environment variables (`INDEXTTS_MLX_WEIGHTS_DIR`, `INDEXTTS_MLX_BPE_MODEL`, `INDEXTTS_MLX_QWEN_EMO`); constructor arguments take precedence.
 
 Call `config.validate()` to verify all required files exist before loading models.
 
@@ -394,9 +500,7 @@ render_segments_jsonl(
 )
 ```
 
-Each JSONL line is a segment record. Per-segment fields override the global defaults:
-
-`render_segments_jsonl` uses the BPE token-count segmenter by default (`segment_strategy="token_count"`, `token_target=250`); override `segment_strategy` and related params to change how chunks are built.
+Each JSONL line is a segment record. Per-segment fields override global defaults:
 
 ```jsonl
 {"segment_id": 1, "text": "Chapter One.", "segment_type": "heading", "pause_after_ms": 800}
@@ -413,6 +517,39 @@ audio = synthesize("Hello.", spk_audio_prompt="speaker.wav")
 ```
 
 Loads all models on every call. Use `IndexTTS2` directly for anything beyond a single synthesis.
+
+### Long-text synthesis
+
+```python
+from indextts_mlx.synthesize_long import synthesize_long, LongSynthesisConfig
+from indextts_mlx.segmenter import SegmenterConfig
+
+seg_config = SegmenterConfig(language="english", strategy="token_count", token_target=250)
+long_config = LongSynthesisConfig(normalize=True, segmenter_config=seg_config)
+
+audio = synthesize_long(
+    text,
+    tts=tts,
+    spk_audio_prompt="speaker.wav",
+    config=long_config,
+    on_chunk=lambda i, total, text: print(f"[{i+1}/{total}] {text[:60]}"),
+    on_chunk_done=lambda i, total, stats: print(f"  {stats['realtime_factor']:.1f}x realtime"),
+)
+```
+
+### EPUB extraction
+
+```python
+from indextts_mlx.epub_extractor import EPUBParser
+from pathlib import Path
+
+parser = EPUBParser(Path("book.epub"))
+chapters = parser.extract_chapters(use_toc=True, min_words=100)
+
+for ch in chapters:
+    print(ch.number, ch.title, ch.word_count)
+    Path(f"chapter_{ch.number:02d}.txt").write_text(ch.content)
+```
 
 ## Pipeline overview
 
@@ -454,11 +591,9 @@ The project uses [Black](https://black.readthedocs.io/) (line length 100, target
 
 ```bash
 source venv/bin/activate
-black indextts_mlx/ cli/ tests/       # format in-place
+black indextts_mlx/ cli/ tests/          # format in-place
 black --check indextts_mlx/ cli/ tests/  # CI check (no writes)
 ```
-
-Black config lives in `pyproject.toml` under `[tool.black]`.
 
 ### Tests
 
