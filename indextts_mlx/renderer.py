@@ -19,6 +19,46 @@ from .synthesize_long import synthesize_long, LongSynthesisConfig
 from .emotion_config import EmotionResolver
 from .segmenter import SegmenterConfig
 
+# Default pause durations in milliseconds for each named label.
+# Override per-project via {voices_dir}/pauses.json.
+_DEFAULT_PAUSE_MS: dict[str, int] = {
+    "none": 0,
+    "short": 250,
+    "neutral": 550,
+    "long": 1100,
+    "dramatic": 2500,
+}
+
+
+def _load_pauses(voices_dir) -> dict[str, int]:
+    """Load pause durations from {voices_dir}/pauses.json if present."""
+    if voices_dir is None:
+        return _DEFAULT_PAUSE_MS
+    pauses_path = Path(voices_dir) / "pauses.json"
+    if not pauses_path.exists():
+        return _DEFAULT_PAUSE_MS
+    try:
+        data = json.loads(pauses_path.read_text())
+        merged = dict(_DEFAULT_PAUSE_MS)
+        merged.update({k: int(v) for k, v in data.items()})
+        return merged
+    except Exception:
+        return _DEFAULT_PAUSE_MS
+
+
+def _resolve_pause_ms(pause_after, pauses: dict[str, int]) -> int:
+    """Convert a pause_after value to milliseconds.
+
+    Accepts a string label (e.g. "long"), an integer (raw ms), or None.
+    """
+    if pause_after is None:
+        return 0
+    if isinstance(pause_after, int):
+        return pause_after
+    if isinstance(pause_after, str):
+        return pauses.get(pause_after, 0)
+    return 0
+
 # Sentinel so we can distinguish "not passed" from None
 _UNSET = object()
 
@@ -49,11 +89,14 @@ def _validate_segment(record: Dict, lineno: int) -> None:
     if emo_alpha is not None and not (0.0 <= float(emo_alpha) <= 1.0):
         raise ValueError(f"Line {lineno}: 'emo_alpha' must be between 0.0 and 1.0")
     pause_before = record.get("pause_before_ms", 0)
-    pause_after = record.get("pause_after_ms", 0)
+    pause_after_ms = record.get("pause_after_ms", 0)
+    pause_after_label = record.get("pause_after")
     if not (0 <= int(pause_before) <= 60000):
         raise ValueError(f"Line {lineno}: 'pause_before_ms' must be 0..60000")
-    if not (0 <= int(pause_after) <= 60000):
+    if not (0 <= int(pause_after_ms) <= 60000):
         raise ValueError(f"Line {lineno}: 'pause_after_ms' must be 0..60000")
+    if pause_after_label is not None and not isinstance(pause_after_label, (str, int)):
+        raise ValueError(f"Line {lineno}: 'pause_after' must be a string label or integer ms")
 
 
 def _segment_cache_key(
@@ -170,6 +213,9 @@ def render_segments_jsonl(
     if cache_dir:
         cache_dir.mkdir(parents=True, exist_ok=True)
 
+    # Load pause durations (voices_dir/pauses.json or defaults)
+    pauses = _load_pauses(voices_dir)
+
     # Build the emotion resolver (auto-discovers emotions.json from voices_dir if not explicit)
     resolver = EmotionResolver.from_voices_dir(
         voices_dir=voices_dir,
@@ -253,7 +299,14 @@ def render_segments_jsonl(
         seg_sample_rate = int(_merge(sample_rate, record.get("sample_rate", None)) or sample_rate)
 
         pause_before = int(record.get("pause_before_ms", 0))
-        pause_after = int(record.get("pause_after_ms", 0))
+        # pause_after_ms is raw ms; pause_after is a named label (e.g. "long").
+        # Named label takes precedence over raw ms if present.
+        _pa_label = record.get("pause_after")
+        _pa_ms = record.get("pause_after_ms", 0)
+        if isinstance(_pa_label, str):
+            pause_after = _resolve_pause_ms(_pa_label, pauses)
+        else:
+            pause_after = int(_pa_ms)
 
         # ── Emotion label resolution ──────────────────────────────────────────
         emotion_label = _rec_emotion if isinstance(_rec_emotion, str) else None
@@ -328,13 +381,15 @@ def render_segments_jsonl(
             emotion_label = _rec_emotion if isinstance(_rec_emotion, str) else None
             if verbose:
                 preview = text[:60] + ("..." if len(text) > 60 else "")
-                emotion_tag = f" [{emotion_label}]" if emotion_label else ""
+                _emo_str = emotion_label or "neutral"
+                _pause_str = _pa_label if isinstance(_pa_label, str) else (
+                    f"{pause_after}ms" if pause_after else "none"
+                )
+                tag = f" emo={_emo_str}, pause={_pause_str}"
                 if chunk_resolver is not None and emotion_label:
-                    drift_tag = f" [drift active, base α={seg_emo_alpha:.3f}]"
-                else:
-                    drift_tag = ""
+                    tag += f" [drift active, base α={seg_emo_alpha:.3f}]"
                 print(
-                    f"  [{idx+1}/{total_segments}] seg={seg_id!r}{emotion_tag}{drift_tag}"
+                    f"  [{idx+1}/{total_segments}] seg={seg_id!r}{tag}"
                     f" synthesizing: {preview!r}"
                 )
 

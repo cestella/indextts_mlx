@@ -110,10 +110,35 @@ class Worker(threading.Thread):
         status_dir = job_dir / ".status"
         status_dir.mkdir(exist_ok=True)
 
+        # Write metadata.json so future scans can recover isbn and settings
+        # without needing the queue entry.  Merge with any existing metadata
+        # (a previous run may have populated title/author via ebooklib).
+        metadata_path = job_dir / "metadata.json"
+        existing_meta = {}
+        if metadata_path.exists():
+            try:
+                existing_meta = json.loads(metadata_path.read_text())
+            except Exception:
+                pass
+        meta = {
+            **existing_meta,
+            "isbn": isbn,
+            "voice": job.get("voice"),
+            "steps": job.get("steps", 10),
+            "temperature": job.get("temperature", 1.0),
+            "emotion": job.get("emotion", 1.0),
+            "cfg_rate": job.get("cfg_rate", 0.7),
+            "token_target": job.get("token_target", 50),
+            "epub_url": job.get("epub_url"),
+        }
+        tmp_meta = metadata_path.with_suffix(".json.tmp")
+        tmp_meta.write_text(json.dumps(meta, indent=2))
+        tmp_meta.replace(metadata_path)
+
         # start_stage controls which pipeline stages are skipped.
-        # A resume job sets this to "extracting", "synthesizing", or "packaging".
+        # A resume job sets this to "extracting", "directing", "synthesizing", or "packaging".
         # A normal job has no start_stage (or "downloading").
-        _STAGE_ORDER = ["downloading", "extracting", "synthesizing", "packaging"]
+        _STAGE_ORDER = ["downloading", "extracting", "directing", "synthesizing", "packaging"]
         start_stage = job.get("start_stage") or "downloading"
         def _should_skip(stage: str) -> bool:
             try:
@@ -151,6 +176,28 @@ class Worker(threading.Thread):
         if epub_path.exists():
             self._try_read_title(jid, epub_path)
 
+        # ── 3. Direct narration (classify emotions + pauses) ─────────────────
+        direct_narration = job.get("direct_narration", False)
+        chapters_directed = job_dir / "chapters_directed"
+        if direct_narration and not _should_skip("directing"):
+            if self._is_cancelled(jid):
+                return
+            # Delete stale classify_status.json so UI doesn't show old progress
+            stale_cls = status_dir / "classify_status.json"
+            if stale_cls.exists():
+                stale_cls.unlink(missing_ok=True)
+            chapters_directed.mkdir(exist_ok=True)
+            self.queue.update(jid, stage="directing")
+            direct_cmd = [
+                cmd,
+                "classify-emotions",
+                str(chapters_txt),
+                str(chapters_directed),
+                "--status",
+                str(status_dir),
+            ]
+            self._run_proc(jid, direct_cmd, stage="directing")
+
         # ── 3. Synthesize chapters → mp3 ─────────────────────────────────────
         if not _should_skip("synthesizing"):
             if self._is_cancelled(jid):
@@ -161,11 +208,14 @@ class Worker(threading.Thread):
             if stale.exists():
                 stale.unlink(missing_ok=True)
             self.queue.update(jid, stage="synthesizing")
+            # Use directed chapters if available (have .jsonl files), else plain txt
+            directed_files = list(chapters_directed.glob("*.jsonl")) if chapters_directed.is_dir() else []
+            synth_input = str(chapters_directed) if directed_files else str(chapters_txt)
             synth_cmd = [
                 cmd,
                 "synthesize",
                 "--file",
-                str(chapters_txt),
+                synth_input,
                 "--out",
                 str(chapters_mp3),
                 "--out-ext",
@@ -184,8 +234,10 @@ class Worker(threading.Thread):
                 str(job["token_target"]),
             ]
             voice = job.get("voice") or self.default_voice
-            if voice and self.voices_dir:
-                synth_cmd += ["--voices-dir", self.voices_dir, "--voice", voice]
+            if self.voices_dir:
+                synth_cmd += ["--voices-dir", self.voices_dir]
+                if voice:
+                    synth_cmd += ["--voice", voice]
             elif voice:
                 synth_cmd += ["--spk-audio-prompt", voice]
             self._run_proc(jid, synth_cmd, stage="synthesizing")
@@ -277,5 +329,18 @@ class Worker(threading.Thread):
             title = title_meta[0][0] if title_meta else None
             author = author_meta[0][0] if author_meta else None
             self.queue.update(job_id, title=title, author=author)
+            # Persist to metadata.json so scans after restart can show the title
+            meta_path = epub_path.parent / "metadata.json"
+            try:
+                meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+                if title:
+                    meta["title"] = title
+                if author:
+                    meta["author"] = author
+                tmp = meta_path.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(meta, indent=2))
+                tmp.replace(meta_path)
+            except Exception:
+                pass
         except Exception:
             pass

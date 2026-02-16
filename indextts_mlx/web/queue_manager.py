@@ -79,6 +79,7 @@ class QueueManager:
         cfg_rate: float = 0.7,
         token_target: int = 250,
         extra_opts: dict | None = None,
+        direct_narration: bool = False,
     ) -> dict:
         dir_name = normalize_isbn(isbn)
         job: dict = {
@@ -92,6 +93,7 @@ class QueueManager:
             "cfg_rate": cfg_rate,
             "token_target": token_target,
             "extra_opts": extra_opts or {},
+            "direct_narration": direct_narration,
             "status": QUEUED,
             "stage": None,
             "created_at": _now(),
@@ -166,6 +168,7 @@ class QueueManager:
         emotion: float = 1.0,
         cfg_rate: float = 0.7,
         token_target: int = 250,
+        direct_narration: bool = False,
     ) -> dict:
         """Queue a job that resumes from an existing directory at start_stage."""
         job: dict = {
@@ -179,6 +182,7 @@ class QueueManager:
             "cfg_rate": cfg_rate,
             "token_target": token_target,
             "extra_opts": {},
+            "direct_narration": direct_narration,
             "status": QUEUED,
             "stage": None,
             "start_stage": start_stage,  # worker skips earlier stages
@@ -204,8 +208,10 @@ class QueueManager:
         stage the worker would resume from.
         """
         # Collect dir_names already tracked in the queue
+        # Only dirs with an active (queued/running) job are excluded.
+        # Interrupted and failed dirs should reappear so the user can resume them.
         with self._lock:
-            tracked = {j["dir_name"] for j in self._jobs if j["status"] not in (DONE, CANCELLED)}
+            tracked = {j["dir_name"] for j in self._jobs if j["status"] in (QUEUED, RUNNING)}
 
         results = []
         for subdir in sorted(self.audiobooks_dir.iterdir()):
@@ -219,14 +225,35 @@ class QueueManager:
             if start_stage is None:
                 continue  # nothing actionable here
 
+            # Read metadata.json if present to surface isbn/title/author/settings
+            meta = _read_metadata(subdir)
+
             results.append(
                 {
                     "dir_name": dir_name,
                     "start_stage": start_stage,
                     "description": description,
+                    "isbn": meta.get("isbn"),
+                    "title": meta.get("title"),
+                    "author": meta.get("author"),
+                    "voice": meta.get("voice"),
+                    "steps": meta.get("steps"),
+                    "emotion": meta.get("emotion"),
+                    "token_target": meta.get("token_target"),
                 }
             )
         return results
+
+
+def _read_metadata(job_dir: Path) -> dict:
+    """Read metadata.json from a job directory, returning {} on any error."""
+    meta_path = job_dir / "metadata.json"
+    if not meta_path.exists():
+        return {}
+    try:
+        return json.loads(meta_path.read_text())
+    except Exception:
+        return {}
 
 
 def _detect_stage(job_dir: Path) -> tuple[str | None, str]:
@@ -242,24 +269,34 @@ def _detect_stage(job_dir: Path) -> tuple[str | None, str]:
 
     chapters_txt = job_dir / "chapters_txt"
     chapters_mp3 = job_dir / "chapters_mp3"
+    chapters_directed = job_dir / "chapters_directed"
 
     txt_files = sorted(chapters_txt.glob("*.txt")) if chapters_txt.is_dir() else []
+    jsonl_files = sorted(chapters_directed.glob("*.jsonl")) if chapters_directed.is_dir() else []
     mp3_files = sorted(chapters_mp3.glob("*.mp3")) if chapters_mp3.is_dir() else []
 
-    # Have both txt and mp3s — may be mid-synthesis or ready to package
-    if txt_files and mp3_files:
-        if len(mp3_files) >= len(txt_files):
-            # All chapters synthesized → go straight to packaging
+    # Determine total chapter count from whatever source is available
+    total_chapters = len(jsonl_files) if jsonl_files else len(txt_files)
+
+    # Have mp3s — check if synthesis is complete or in progress
+    if mp3_files and total_chapters:
+        if len(mp3_files) >= total_chapters:
             return "packaging", f"{len(mp3_files)} mp3s ready, packaging M4B"
         else:
             return (
                 "synthesizing",
-                f"{len(mp3_files)}/{len(txt_files)} chapters synthesized, resuming",
+                f"{len(mp3_files)}/{total_chapters} chapters synthesized, resuming",
             )
 
-    # Have txt but no mp3s → synthesize from scratch
+    # Have directed jsonl but no mp3s → synthesize from directed output
+    if jsonl_files:
+        return "synthesizing", f"{len(jsonl_files)} directed chapters ready to synthesize"
+
+    # Have txt but no directed/mp3 → start at directing stage so the worker
+    # can decide whether to run classify-emotions (based on direct_narration flag)
+    # or skip straight to synthesizing.
     if txt_files:
-        return "synthesizing", f"{len(txt_files)} chapters extracted, ready to synthesize"
+        return "directing", f"{len(txt_files)} chapters extracted, ready to direct or synthesize"
 
     # Have an epub but no txt → extract first
     epub_files = list(job_dir.glob("*.epub"))

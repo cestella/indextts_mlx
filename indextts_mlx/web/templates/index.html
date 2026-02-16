@@ -90,7 +90,7 @@
       .form-grid .full { grid-column: 1 / -1; }
     }
     label { display: block; font-size: 0.78rem; color: var(--text-dim); margin-bottom: 4px; }
-    input, select {
+    input:not([type="checkbox"]):not([type="radio"]), select {
       width: 100%;
       background: var(--surface2);
       border: 1px solid var(--border);
@@ -104,7 +104,7 @@
       -webkit-appearance: none;
       appearance: none;
     }
-    input:focus, select:focus { border-color: var(--accent); }
+    input:not([type="checkbox"]):not([type="radio"]):focus, select:focus { border-color: var(--accent); }
     .field-row { display: flex; gap: 8px; align-items: flex-end; }
     .field-row input { flex: 1; }
 
@@ -150,6 +150,7 @@
     }
     .stage-downloading  { background:#1e3a5f; color:#5b9ef0; }
     .stage-extracting   { background:#2a2500; color:#f5c842; }
+    .stage-directing    { background:#1d1a36; color:#a78bfa; }
     .stage-synthesizing { background:#0f2d1f; color:#3ecf8e; }
     .stage-packaging    { background:#2d1020; color:#e57bbc; }
     .stage-starting     { background:#222; color:#888; }
@@ -379,6 +380,12 @@
             <label for="token_target">Token target</label>
             <input type="number" id="token_target" name="token_target" value="50" min="50" max="550">
           </div>
+          <div style="display:flex;align-items:center;gap:8px;padding-top:4px;">
+            <input type="checkbox" id="direct_narration" name="direct_narration" style="width:auto">
+            <label for="direct_narration" style="margin-bottom:0;cursor:pointer;">
+              Generate narration directions <span style="color:var(--text-dim);font-size:0.72rem;">(classify emotions + pauses)</span>
+            </label>
+          </div>
         </div>
 
         <div style="margin-top:16px;">
@@ -491,6 +498,7 @@
       steps: parseInt(document.getElementById('steps').value),
       emotion: parseFloat(document.getElementById('emotion').value),
       token_target: parseInt(document.getElementById('token_target').value),
+      direct_narration: document.getElementById('direct_narration').checked,
     };
     try {
       const r = await fetch('/api/submit', {
@@ -625,23 +633,34 @@
             </button>
           </div>
           <div class="resume-panel" id="panel_${uid}">
+            <div style="margin-bottom:10px;">
+              <label>ISBN <span style="color:var(--text-dim);font-size:0.72rem;">(required — used for M4B metadata)</span></label>
+              <input type="text" id="${uid}_isbn" value="${esc(d.isbn || '')}" placeholder="978-0-06-112008-4"
+                style="${!d.isbn ? 'border-color:var(--yellow)' : ''}">
+            </div>
             <div class="resume-grid">
               <div>
                 <label>Voice</label>
-                <select id="${uid}_voice">${voiceOpts}</select>
+                <select id="${uid}_voice" data-voice="${esc(d.voice || '')}">${voiceOpts}</select>
               </div>
               <div>
                 <label>CFM Steps</label>
-                <input type="number" id="${uid}_steps" value="10" min="1" max="50">
+                <input type="number" id="${uid}_steps" value="${d.steps ?? 10}" min="1" max="50">
               </div>
               <div>
                 <label>Emotion (0–2)</label>
-                <input type="number" id="${uid}_emotion" value="1.0" step="0.1" min="0" max="2">
+                <input type="number" id="${uid}_emotion" value="${d.emotion ?? 1.0}" step="0.1" min="0" max="2">
               </div>
               <div>
                 <label>Token target</label>
-                <input type="number" id="${uid}_token_target" value="50" min="50" max="550">
+                <input type="number" id="${uid}_token_target" value="${d.token_target ?? 50}" min="50" max="550">
               </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
+              <input type="checkbox" id="${uid}_direct_narration" style="width:auto">
+              <label for="${uid}_direct_narration" style="margin-bottom:0;cursor:pointer;font-size:0.8rem;">
+                Generate narration directions
+              </label>
             </div>
             <button class="btn btn-primary btn-sm"
               onclick='confirmResume(${JSON.stringify(d.dir_name)}, ${JSON.stringify(d.start_stage)}, "${uid}")'>
@@ -658,23 +677,32 @@
     const btn = document.getElementById('btn_' + uid);
     const open = panel.classList.toggle('open');
     btn.classList.toggle('open', open);
+    // Set voice dropdown value after panel is in DOM (data stored via data-attr)
+    if (open) {
+      const sel = document.getElementById(uid + '_voice');
+      if (sel && sel.dataset.voice) sel.value = sel.dataset.voice;
+    }
   }
 
   async function confirmResume(dirName, startStage, uid) {
+    const isbn = (document.getElementById(uid + '_isbn').value || '').trim();
+    if (!isbn) { toast('ISBN is required', true); return; }
     const voice = document.getElementById(uid + '_voice').value;
     const steps = parseInt(document.getElementById(uid + '_steps').value) || 10;
     const emotion = parseFloat(document.getElementById(uid + '_emotion').value) || 1.0;
     const tokenTarget = parseInt(document.getElementById(uid + '_token_target').value) || 50;
+    const directNarration = document.getElementById(uid + '_direct_narration')?.checked || false;
     try {
       const r = await fetch('/api/resume', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
           dir_name: dirName,
-          isbn: dirName,
+          isbn: isbn,
           voice: voice || null,
           start_stage: startStage,
           steps, emotion, token_target: tokenTarget,
+          direct_narration: directNarration,
         }),
       });
       const j = await r.json();
@@ -697,11 +725,14 @@
     btn.classList.toggle('open', open);
   }
 
-  async function confirmJobResume(uid, dirName, isbn) {
+  async function confirmJobResume(uid, dirName) {
+    const isbn = (document.getElementById(uid + '_isbn').value || '').trim();
+    if (!isbn) { toast('ISBN is required', true); return; }
     const voice = document.getElementById(uid + '_voice').value;
     const steps = parseInt(document.getElementById(uid + '_steps').value) || 10;
     const emotion = parseFloat(document.getElementById(uid + '_emotion').value) || 1.0;
     const tokenTarget = parseInt(document.getElementById(uid + '_token_target').value) || 50;
+    const directNarration = document.getElementById(uid + '_direct_narration')?.checked || false;
     try {
       const r = await fetch('/api/resume', {
         method: 'POST',
@@ -712,6 +743,7 @@
           voice: voice || null,
           // start_stage omitted — backend will auto-detect from directory
           steps, emotion, token_target: tokenTarget,
+          direct_narration: directNarration,
         }),
       });
       const j = await r.json();
@@ -732,7 +764,7 @@
     return `<span class="stage-badge stage-${esc(stage)}">${esc(label)}</span>`;
   }
 
-  function renderActiveJob(job, synth) {
+  function renderActiveJob(job, synth, cls) {
     if (!job) return '';
     const stageHTML = renderStageBadge(job.stage);
     const title = job.title ? `<strong>${esc(job.title)}</strong>` : `ISBN ${esc(job.isbn)}`;
@@ -740,7 +772,46 @@
     let progressHTML = '';
     let statsHTML = '';
 
-    if (job.stage === 'synthesizing' && synth) {
+    if (job.stage === 'directing' && cls) {
+      const pct = cls.total_files > 0
+        ? Math.round((cls.file_index / cls.total_files) * 100)
+        : 0;
+      const sentPct = cls.total_sentences > 0
+        ? Math.round((cls.sentence_index / cls.total_sentences) * 100)
+        : 0;
+      progressHTML = `
+        <div style="margin-top:8px;">
+          <div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:4px;">
+            File ${cls.file_index + 1} / ${cls.total_files} — ${esc(cls.file_name || '')}
+          </div>
+          <div class="progress-wrap">
+            <div class="progress-bar" style="width:${pct}%;background:var(--accent)"></div>
+          </div>
+          <div style="font-size:0.7rem;color:var(--text-dim);margin-bottom:2px;">
+            Sentence ${cls.sentence_index} / ${cls.total_sentences}
+          </div>
+          <div class="progress-wrap" style="height:4px">
+            <div class="progress-bar" style="width:${sentPct}%;background:#a78bfa"></div>
+          </div>
+        </div>`;
+      const sentEtaVal = cls.sent_eta_s != null ? fmtEta(cls.sent_eta_s) : 'Pending';
+      const fileEtaVal = cls.file_eta_s != null ? fmtEta(cls.file_eta_s) : 'Pending';
+      statsHTML = `
+        <div class="stat-grid">
+          <div class="stat-box">
+            <div class="stat-label">Sentence ETA</div>
+            <div class="stat-value accent">${sentEtaVal}</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">Job ETA</div>
+            <div class="stat-value ${cls.file_eta_s != null ? 'accent' : ''}">${fileEtaVal}</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">Files left</div>
+            <div class="stat-value yellow">${cls.total_files - cls.file_index}</div>
+          </div>
+        </div>`;
+    } else if (job.stage === 'synthesizing' && synth) {
       const pct = synth.total_files > 0
         ? Math.round((synth.file_index / synth.total_files) * 100)
         : 0;
@@ -789,6 +860,8 @@
       progressHTML = `<div style="margin-top:10px;color:var(--text-dim);font-size:0.85rem;">Downloading EPUB…</div>`;
     } else if (job.stage === 'extracting') {
       progressHTML = `<div style="margin-top:10px;color:var(--text-dim);font-size:0.85rem;">Extracting chapters…</div>`;
+    } else if (job.stage === 'directing') {
+      progressHTML = `<div style="margin-top:10px;color:var(--text-dim);font-size:0.85rem;">Classifying narration (emotions + pauses)…</div>`;
     } else if (job.stage === 'packaging') {
       progressHTML = `<div style="margin-top:10px;color:var(--text-dim);font-size:0.85rem;">Packaging M4B…</div>`;
     }
@@ -862,6 +935,11 @@
 
     const panel = `
       <div class="resume-panel" id="rp_${uid}" style="border-radius:0 0 8px 8px;border:1px solid var(--border);border-top:none;">
+        <div style="margin-bottom:10px;">
+          <label>ISBN <span style="color:var(--text-dim);font-size:0.72rem;">(required — used for M4B metadata)</span></label>
+          <input type="text" id="${uid}_isbn" value="${esc(job.isbn || '')}" placeholder="978-0-06-112008-4"
+            style="${!job.isbn ? 'border-color:var(--yellow)' : ''}">
+        </div>
         <div class="resume-grid">
           <div>
             <label>Voice</label>
@@ -880,8 +958,14 @@
             <input type="number" id="${uid}_token_target" value="${job.token_target ?? 50}" min="50" max="550">
           </div>
         </div>
+        <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
+          <input type="checkbox" id="${uid}_direct_narration" style="width:auto">
+          <label for="${uid}_direct_narration" style="margin-bottom:0;cursor:pointer;font-size:0.8rem;">
+            Generate narration directions
+          </label>
+        </div>
         <button class="btn btn-primary btn-sm"
-          onclick="confirmJobResume('${uid}', '${esc(job.dir_name)}', '${esc(job.isbn)}')">
+          onclick="confirmJobResume('${uid}', '${esc(job.dir_name)}')">
           ▶ Queue resume
         </button>
       </div>`;
@@ -921,7 +1005,7 @@
       const activeContent = document.getElementById('active-content');
       if (data.active) {
         activeCard.style.display = '';
-        activeContent.innerHTML = renderActiveJob(data.active, data.synth_status);
+        activeContent.innerHTML = renderActiveJob(data.active, data.synth_status, data.classify_status);
         document.getElementById('header-status').textContent =
           (data.active.title || data.active.isbn) + ' — ' + (data.active.stage || 'running');
       } else {

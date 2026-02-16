@@ -41,6 +41,18 @@ def create_app(
                 return None
         return None
 
+    def _classify_status(job: dict) -> dict | None:
+        """Read classify_status.json for a directing job if it exists."""
+        if not job.get("dir_name"):
+            return None
+        status_file = audiobooks_dir / job["dir_name"] / ".status" / "classify_status.json"
+        if status_file.exists():
+            try:
+                return json.loads(status_file.read_text())
+            except Exception:
+                return None
+        return None
+
     def _list_voices() -> list[str]:
         if not voices_dir:
             return []
@@ -62,11 +74,13 @@ def create_app(
         jobs = queue.all_jobs()
         active = queue.active_job()
         synth = _synth_status(active) if active else None
+        cls = _classify_status(active) if active else None
         return jsonify(
             {
                 "jobs": jobs,
                 "active": active,
                 "synth_status": synth,
+                "classify_status": cls,
                 "voices": _list_voices(),
             }
         )
@@ -77,7 +91,8 @@ def create_app(
         if not job:
             abort(404)
         synth = _synth_status(job)
-        return jsonify({"job": job, "synth_status": synth})
+        cls = _classify_status(job)
+        return jsonify({"job": job, "synth_status": synth, "classify_status": cls})
 
     @app.route("/api/submit", methods=["POST"])
     def api_submit():
@@ -96,6 +111,7 @@ def create_app(
             emotion=float(data.get("emotion", 1.0)),
             cfg_rate=float(data.get("cfg_rate", 0.7)),
             token_target=int(data.get("token_target", 50)),
+            direct_narration=bool(data.get("direct_narration", False)),
         )
         return jsonify({"job": job}), 201
 
@@ -104,8 +120,13 @@ def create_app(
         """Return all .m4b files found under audiobooks_dir."""
         books = []
         for m4b in sorted(audiobooks_dir.rglob("*.m4b")):
+            try:
+                stat = m4b.stat()  # raises if symlink is dangling
+                if not m4b.is_file():
+                    continue
+            except OSError:
+                continue
             rel = m4b.relative_to(audiobooks_dir)
-            stat = m4b.stat()
             books.append(
                 {
                     "name": m4b.stem,
@@ -151,6 +172,7 @@ def create_app(
             emotion=float(data.get("emotion", 1.0)),
             cfg_rate=float(data.get("cfg_rate", 0.7)),
             token_target=int(data.get("token_target", 50)),
+            direct_narration=bool(data.get("direct_narration", False)),
         )
         return jsonify({"job": job}), 201
 
