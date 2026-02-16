@@ -240,6 +240,7 @@ class QueueManager:
                     "steps": meta.get("steps"),
                     "emotion": meta.get("emotion"),
                     "token_target": meta.get("token_target"),
+                    "direct_narration": bool(meta.get("direct_narration", False)),
                 }
             )
         return results
@@ -275,28 +276,44 @@ def _detect_stage(job_dir: Path) -> tuple[str | None, str]:
     jsonl_files = sorted(chapters_directed.glob("*.jsonl")) if chapters_directed.is_dir() else []
     mp3_files = sorted(chapters_mp3.glob("*.mp3")) if chapters_mp3.is_dir() else []
 
-    # Determine total chapter count from whatever source is available
-    total_chapters = len(jsonl_files) if jsonl_files else len(txt_files)
+    n_txt = len(txt_files)
+    n_jsonl = len(jsonl_files)
+    n_mp3 = len(mp3_files)
 
-    # Have mp3s — check if synthesis is complete or in progress
-    if mp3_files and total_chapters:
-        if len(mp3_files) >= total_chapters:
-            return "packaging", f"{len(mp3_files)} mp3s ready, packaging M4B"
+    # chapters_txt is always the ground truth: one .txt per chapter, written
+    # atomically by the extract step before any other stage runs.
+    total_chapters = n_txt
+
+    directing_complete = n_txt > 0 and n_jsonl >= n_txt
+    # Synthesize input is directed jsonl if directing is complete, else txt
+    synth_total = n_jsonl if directing_complete else n_txt
+
+    # Have mp3s — check if synthesis is complete or still in progress
+    if n_mp3 and synth_total:
+        if n_mp3 >= synth_total:
+            return "packaging", f"{n_mp3} mp3s ready, packaging M4B"
         else:
             return (
                 "synthesizing",
-                f"{len(mp3_files)}/{total_chapters} chapters synthesized, resuming",
+                f"{n_mp3}/{synth_total} chapters synthesized, resuming",
             )
 
-    # Have directed jsonl but no mp3s → synthesize from directed output
-    if jsonl_files:
-        return "synthesizing", f"{len(jsonl_files)} directed chapters ready to synthesize"
+    # Directing was started but not finished → resume directing
+    if n_jsonl and not directing_complete:
+        return (
+            "directing",
+            f"{n_jsonl}/{n_txt} chapters directed, resuming",
+        )
+
+    # Directing is fully complete → synthesize from directed output
+    if directing_complete:
+        return "synthesizing", f"{n_jsonl} directed chapters ready to synthesize"
 
     # Have txt but no directed/mp3 → start at directing stage so the worker
     # can decide whether to run classify-emotions (based on direct_narration flag)
     # or skip straight to synthesizing.
     if txt_files:
-        return "directing", f"{len(txt_files)} chapters extracted, ready to direct or synthesize"
+        return "directing", f"{n_txt} chapters extracted, ready to direct or synthesize"
 
     # Have an epub but no txt → extract first
     epub_files = list(job_dir.glob("*.epub"))

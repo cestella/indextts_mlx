@@ -21,11 +21,16 @@ def create_app(
     voices_dir: str | None,
     queue: "QueueManager",
     worker: "Worker",
+    public_url: str | None = None,
+    dev: bool = False,
 ) -> Flask:
     audiobooks_dir = Path(audiobooks_dir)
     template_dir = Path(__file__).parent / "templates"
     app = Flask(__name__, template_folder=str(template_dir))
     app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024  # 1 MB max request
+    if dev:
+        app.config["TEMPLATES_AUTO_RELOAD"] = True
+        app.jinja_env.auto_reload = True
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -67,7 +72,7 @@ def create_app(
 
     @app.route("/")
     def index():
-        return render_template("index.html")
+        return render_template("index.html", public_url=public_url or "")
 
     @app.route("/api/queue")
     def api_queue():

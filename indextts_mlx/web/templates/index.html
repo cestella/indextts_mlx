@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>IndexTTS — Audiobook Builder</title>
+  <script>const PUBLIC_URL = "{{ public_url }}";</script>
   <style>
     /* ── reset & base ─────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -178,9 +179,12 @@
 
     .stat-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      grid-template-columns: 1fr;
       gap: 10px;
       margin-top: 14px;
+    }
+    @media (min-width: 480px) {
+      .stat-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
     }
     .stat-box {
       background: var(--surface2);
@@ -576,7 +580,8 @@
         return;
       }
       list.innerHTML = data.books.map((b, i) => {
-        const downloadUrl = window.location.origin + '/files/' + encodeURIComponent(b.path).replace(/%2F/g, '/');
+        const _base = PUBLIC_URL || window.location.origin;
+        const downloadUrl = _base + '/files/' + encodeURIComponent(b.path).replace(/%2F/g, '/');
         const uid = 'lib' + i;
         return `
           <div class="book-item">
@@ -667,7 +672,7 @@
               </div>
             </div>
             <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
-              <input type="checkbox" id="${uid}_direct_narration" style="width:auto">
+              <input type="checkbox" id="${uid}_direct_narration" style="width:auto" ${d.direct_narration ? 'checked' : ''}>
               <label for="${uid}_direct_narration" style="margin-bottom:0;cursor:pointer;font-size:0.8rem;">
                 Generate narration directions
               </label>
@@ -969,7 +974,7 @@
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
-          <input type="checkbox" id="${uid}_direct_narration" style="width:auto">
+          <input type="checkbox" id="${uid}_direct_narration" style="width:auto" ${job.direct_narration ? 'checked' : ''}>
           <label for="${uid}_direct_narration" style="margin-bottom:0;cursor:pointer;font-size:0.8rem;">
             Generate narration directions
           </label>

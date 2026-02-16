@@ -130,6 +130,7 @@ class Worker(threading.Thread):
             "cfg_rate": job.get("cfg_rate", 0.7),
             "token_target": job.get("token_target", 50),
             "epub_url": job.get("epub_url"),
+            "direct_narration": job.get("direct_narration", False),
         }
         tmp_meta = metadata_path.with_suffix(".json.tmp")
         tmp_meta.write_text(json.dumps(meta, indent=2))

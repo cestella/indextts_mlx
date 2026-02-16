@@ -468,13 +468,48 @@ class TestScanDirs:
         assert results[0]["start_stage"] == "extracting"
         assert results[0]["dir_name"] == "0743273565"
 
-    def test_txt_only_returns_synthesizing(self, tmp_ab_dir):
+    def test_txt_only_returns_directing(self, tmp_ab_dir):
+        # txt present but no jsonl/mp3 → start at directing so the worker
+        # can decide whether to direct or skip straight to synthesizing.
         from indextts_mlx.web.queue_manager import QueueManager
 
         d = _make_dir(tmp_ab_dir, "0743273565")
         txt = d / "chapters_txt"
         txt.mkdir()
         (txt / "ch01.txt").write_text("hello")
+        q = QueueManager(tmp_ab_dir)
+        results = q.scan_dirs()
+        assert results[0]["start_stage"] == "directing"
+
+    def test_partial_jsonl_returns_directing(self, tmp_ab_dir):
+        # Directing was killed mid-run: 3 of 5 chapters have jsonl → resume directing
+        from indextts_mlx.web.queue_manager import QueueManager
+
+        d = _make_dir(tmp_ab_dir, "0743273565")
+        txt = d / "chapters_txt"
+        txt.mkdir()
+        directed = d / "chapters_directed"
+        directed.mkdir()
+        for i in range(5):
+            (txt / f"ch{i:02d}.txt").write_text("x")
+        for i in range(3):
+            (directed / f"ch{i:02d}.jsonl").write_text("{}")
+        q = QueueManager(tmp_ab_dir)
+        results = q.scan_dirs()
+        assert results[0]["start_stage"] == "directing"
+
+    def test_complete_jsonl_returns_synthesizing(self, tmp_ab_dir):
+        # All chapters directed → synthesize from directed output
+        from indextts_mlx.web.queue_manager import QueueManager
+
+        d = _make_dir(tmp_ab_dir, "0743273565")
+        txt = d / "chapters_txt"
+        txt.mkdir()
+        directed = d / "chapters_directed"
+        directed.mkdir()
+        for i in range(4):
+            (txt / f"ch{i:02d}.txt").write_text("x")
+            (directed / f"ch{i:02d}.jsonl").write_text("{}")
         q = QueueManager(tmp_ab_dir)
         results = q.scan_dirs()
         assert results[0]["start_stage"] == "synthesizing"
@@ -509,6 +544,18 @@ class TestScanDirs:
         q = QueueManager(tmp_ab_dir)
         results = q.scan_dirs()
         assert results[0]["start_stage"] == "packaging"
+
+    def test_empty_chapters_txt_returns_extracting(self, tmp_ab_dir):
+        # chapters_txt dir exists but has no .txt files — should re-extract
+        from indextts_mlx.web.queue_manager import QueueManager
+
+        d = _make_dir(tmp_ab_dir, "0743273565")
+        (d / "chapters_txt").mkdir()           # empty dir
+        (d / "0743273565.epub").write_bytes(b"fake")
+        q = QueueManager(tmp_ab_dir)
+        results = q.scan_dirs()
+        assert len(results) == 1
+        assert results[0]["start_stage"] == "extracting"
 
     def test_m4b_already_done_not_returned(self, tmp_ab_dir):
         from indextts_mlx.web.queue_manager import QueueManager

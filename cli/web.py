@@ -40,7 +40,22 @@ import click
     show_default=True,
     help="Host to bind to. Use 127.0.0.1 to restrict to localhost.",
 )
-def web(port, audiobooks_dir, voices_dir, default_voice, host):
+@click.option(
+    "--public-url",
+    default=None,
+    help=(
+        "Public base URL used when generating shareable download links "
+        "(e.g. https://myhost.dyndns.org:5000). "
+        "If omitted, links use the browser's current origin."
+    ),
+)
+@click.option(
+    "--dev",
+    is_flag=True,
+    default=False,
+    help="Disable template caching so HTML changes are picked up on page refresh.",
+)
+def web(port, audiobooks_dir, voices_dir, default_voice, host, public_url, dev):
     """Start the IndexTTS audiobook builder web interface.
 
     The server accepts EPUB URLs and ISBNs, queues download + extraction +
@@ -85,6 +100,8 @@ def web(port, audiobooks_dir, voices_dir, default_voice, host):
         voices_dir=voices_dir,
         queue=queue,
         worker=worker,
+        public_url=public_url.rstrip("/") if public_url else None,
+        dev=dev,
     )
 
     click.echo(f"\nIndexTTS web UI running at http://{host}:{port}/")
