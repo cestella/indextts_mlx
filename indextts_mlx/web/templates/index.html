@@ -29,6 +29,7 @@
       min-height: 100vh;
       font-size: 15px;
       line-height: 1.5;
+      overflow-x: hidden;
     }
 
     /* ── layout ───────────────────────────────────────────────────────────── */
@@ -60,6 +61,11 @@
       gap: 20px;
     }
 
+    @media (max-width: 400px) {
+      body { font-size: 14px; }
+      .card { padding: 14px 12px; }
+      header { padding: 12px 14px; }
+    }
     @media (min-width: 680px) {
       .container { padding: 28px 24px 80px; }
     }
@@ -192,7 +198,8 @@
     .job-item {
       display: flex;
       align-items: center;
-      gap: 12px;
+      flex-wrap: wrap;
+      gap: 8px 12px;
       background: var(--surface2);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -259,14 +266,16 @@
     .resume-grid {
       display: grid;
       gap: 10px;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr;
       margin-bottom: 12px;
     }
+    @media (min-width: 400px) { .resume-grid { grid-template-columns: 1fr 1fr; } }
     @media (min-width: 560px) { .resume-grid { grid-template-columns: 1fr 1fr 1fr 1fr; } }
 
     /* ── tabs ─────────────────────────────────────────────────────────────── */
     .tab-bar {
       display: flex;
+      flex-wrap: wrap;
       gap: 4px;
       background: var(--surface);
       border: 1px solid var(--border);
@@ -275,6 +284,7 @@
     }
     .tab-btn {
       flex: 1;
+      min-width: 80px;
       background: none;
       border: none;
       color: var(--text-dim);

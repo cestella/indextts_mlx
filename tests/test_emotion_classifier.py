@@ -189,6 +189,48 @@ class TestBuildPausePrompt:
 
 
 # ---------------------------------------------------------------------------
+# Pause prompt: attribution-tag rule
+# ---------------------------------------------------------------------------
+
+
+class TestPausePromptAttributionTagRule:
+    """The pause prompt must explicitly instruct the model to use short/neutral
+    (never long/dramatic) for dialogue attribution tags like 'X said.'"""
+
+    def _pause_block(self) -> str:
+        from indextts_mlx.emotion_classifier import _PAUSE_PROMPT_TEMPLATE
+        return _PAUSE_PROMPT_TEMPLATE
+
+    def test_attribution_tag_rule_present(self):
+        p = self._pause_block()
+        assert "attribution" in p.lower(), (
+            "Pause prompt must mention attribution tags"
+        )
+
+    def test_speech_verbs_mentioned(self):
+        p = self._pause_block()
+        # At least some canonical speech verbs should appear as examples
+        speech_verbs = ["said", "asked", "replied", "repeated"]
+        assert any(v in p for v in speech_verbs), (
+            "Pause prompt must give examples of attribution speech verbs"
+        )
+
+    def test_long_excluded_for_attribution(self):
+        p = self._pause_block()
+        # The rule must say attribution tags must NOT use long or dramatic
+        assert "never long" in p.lower() or "not long" in p.lower() or (
+            "never" in p.lower() and "long" in p.lower()
+        ), "Pause prompt must state long/dramatic are forbidden for attribution tags"
+
+    def test_attribution_example_present(self):
+        p = self._pause_block()
+        # Should include a concrete sentence example showing the tag pattern
+        assert "said." in p or "repeated." in p or "asked." in p, (
+            "Pause prompt should give a concrete attribution tag example"
+        )
+
+
+# ---------------------------------------------------------------------------
 # ClassifierConfig
 # ---------------------------------------------------------------------------
 

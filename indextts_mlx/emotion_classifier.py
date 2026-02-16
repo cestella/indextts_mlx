@@ -178,9 +178,20 @@ PAUSE TYPES AND THEIR MEANINGS:
 
 1 = short (~0.25 s)
   Brief micro-pause.
-  Use after a comma-like beat at sentence end, after dialogue tags
-  where narration continues immediately, or after an em dash (—) that
-  ends a sentence mid-thought.
+  Use after a comma-like beat at sentence end, or after an em dash (—)
+  that ends a sentence mid-thought.
+
+  DIALOGUE ATTRIBUTION TAGS: Any sentence whose main verb is a speech
+  verb (said, asked, replied, called, continued, repeated, exclaimed,
+  whispered, shouted, muttered, answered, added, etc.) is an attribution
+  tag. Attribution tags MUST use short (1) or neutral (2) — never long
+  or dramatic — regardless of how tense or important the spoken content
+  is. The pause belongs after the quoted speech, not after the tag.
+
+  Examples of attribution tags → short or neutral:
+    '"They'll come tonight," Mr. Gonzales said.'          → short or neutral
+    '"Priscilla is missing," Roger repeated.'             → short or neutral
+    '"What?" she asked, her voice trembling.'             → short or neutral
 
 2 = neutral (~0.55 s)
   Standard sentence-end pause.
@@ -192,6 +203,7 @@ PAUSE TYPES AND THEIR MEANINGS:
   Use when moving between clearly distinct topics or scenes, after a
   section-ending summary sentence, or after ellipsis (...) trailing off.
   Ellipsis (...) strongly suggests a long or dramatic pause.
+  Never use for attribution tags (see short rule above).
 
 4 = dramatic (~2.5 s)
   Maximum pause for high-impact moments.

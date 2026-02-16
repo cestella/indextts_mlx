@@ -61,4 +61,5 @@ include = '\.pyi?$'
 [tool.pytest.ini_options]
 markers = [
     "parity: parity tests against reference implementations (skipped if deps missing)",
+    "llm: tests that load the real LLM (skipped by default; run with --llm)",
 ]
