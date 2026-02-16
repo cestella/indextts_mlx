@@ -4,9 +4,7 @@ import pytest
 
 from indextts_mlx.boundary_detector import detect_boundaries
 
-sent_transformers_available = bool(
-    __import__("importlib").util.find_spec("sentence_transformers")
-)
+sent_transformers_available = bool(__import__("importlib").util.find_spec("sentence_transformers"))
 
 
 # ---------------------------------------------------------------------------
@@ -105,9 +103,7 @@ class TestExplicitParagraphBreaks:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    not sent_transformers_available, reason="sentence-transformers not installed"
-)
+@pytest.mark.skipif(not sent_transformers_available, reason="sentence-transformers not installed")
 class TestSemanticBoundaries:
     """These tests verify tier-2 behaviour but are approximate — we just check
     that the function runs and returns plausible results without asserting

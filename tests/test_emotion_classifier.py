@@ -56,7 +56,14 @@ class TestApplyHysteresis:
     def test_spec_example(self):
         # From spec: 0,0,0,3,0,0,2,0 → isolated spikes removed
         assert _apply_hysteresis([0, 0, 0, 3, 0, 0, 2, 0], min_run=2) == [
-            0, 0, 0, 0, 0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
         ]
 
     def test_two_short_runs_both_collapsed(self):
@@ -64,7 +71,15 @@ class TestApplyHysteresis:
 
     def test_two_long_runs_both_preserved(self):
         assert _apply_hysteresis([1, 1, 0, 2, 2, 0, 3, 3, 3], min_run=2) == [
-            1, 1, 0, 2, 2, 0, 3, 3, 3,
+            1,
+            1,
+            0,
+            2,
+            2,
+            0,
+            3,
+            3,
+            3,
         ]
 
     def test_all_same_nonzero_preserved(self):
@@ -199,35 +214,36 @@ class TestPausePromptAttributionTagRule:
 
     def _pause_block(self) -> str:
         from indextts_mlx.emotion_classifier import _PAUSE_PROMPT_TEMPLATE
+
         return _PAUSE_PROMPT_TEMPLATE
 
     def test_attribution_tag_rule_present(self):
         p = self._pause_block()
-        assert "attribution" in p.lower(), (
-            "Pause prompt must mention attribution tags"
-        )
+        assert "attribution" in p.lower(), "Pause prompt must mention attribution tags"
 
     def test_speech_verbs_mentioned(self):
         p = self._pause_block()
         # At least some canonical speech verbs should appear as examples
         speech_verbs = ["said", "asked", "replied", "repeated"]
-        assert any(v in p for v in speech_verbs), (
-            "Pause prompt must give examples of attribution speech verbs"
-        )
+        assert any(
+            v in p for v in speech_verbs
+        ), "Pause prompt must give examples of attribution speech verbs"
 
     def test_long_excluded_for_attribution(self):
         p = self._pause_block()
         # The rule must say attribution tags must NOT use long or dramatic
-        assert "never long" in p.lower() or "not long" in p.lower() or (
-            "never" in p.lower() and "long" in p.lower()
+        assert (
+            "never long" in p.lower()
+            or "not long" in p.lower()
+            or ("never" in p.lower() and "long" in p.lower())
         ), "Pause prompt must state long/dramatic are forbidden for attribution tags"
 
     def test_attribution_example_present(self):
         p = self._pause_block()
         # Should include a concrete sentence example showing the tag pattern
-        assert "said." in p or "repeated." in p or "asked." in p, (
-            "Pause prompt should give a concrete attribution tag example"
-        )
+        assert (
+            "said." in p or "repeated." in p or "asked." in p
+        ), "Pause prompt should give a concrete attribution tag example"
 
 
 # ---------------------------------------------------------------------------
@@ -574,8 +590,10 @@ class TestClassifyTextStubbed:
     def test_on_sentence_callback_called_per_sentence(self):
         clf = _make_clf_stubbed([0] * 10)
         calls = []
+
         def cb(idx, total):
             calls.append((idx, total))
+
         clf.classify_text("One. Two. Three.", verbose=False, on_sentence=cb)
         assert len(calls) == len(clf._get_sentences("One. Two. Three."))
         # Indices should be sequential 0, 1, 2, ...
@@ -619,6 +637,7 @@ class TestClassifyTextStubbed:
     def test_batch_chapter_id_written_to_jsonl(self, tmp_path):
         """chapter_id from batch mode survives the JSONL round-trip."""
         import json as _json
+
         txt = tmp_path / "part_one.txt"
         txt.write_text("First. Second. Third.", encoding="utf-8")
         clf = _make_clf_stubbed([0] * 10)
@@ -642,6 +661,7 @@ class TestClassifyTextStubbed:
 
         # Inject a fake boundary detector that says boundary is after sentence 0
         import indextts_mlx.boundary_detector as _bd
+
         original = _bd.detect_boundaries
         _bd.detect_boundaries = lambda sentences, text, **kw: {0}
         try:
@@ -650,9 +670,9 @@ class TestClassifyTextStubbed:
             _bd.detect_boundaries = original
 
         if records:
-            assert records[0].pause_idx == 4, (
-                f"Expected boundary upgrade to 4 (dramatic), got {records[0].pause_idx}"
-            )
+            assert (
+                records[0].pause_idx == 4
+            ), f"Expected boundary upgrade to 4 (dramatic), got {records[0].pause_idx}"
 
 
 # ---------------------------------------------------------------------------
@@ -678,17 +698,19 @@ class TestGetSentencesFragmentFiltering:
         sentences = self._get_sentences('"Priscilla is missing."')
         for s in sentences:
             import re
-            assert len(re.findall(r"[A-Za-z]", s)) >= 3, (
-                f"Fragment with <3 letters should have been filtered: {s!r}"
-            )
+
+            assert (
+                len(re.findall(r"[A-Za-z]", s)) >= 3
+            ), f"Fragment with <3 letters should have been filtered: {s!r}"
 
     def test_single_quote_period_dropped(self):
-        sentences = self._get_sentences("Go. \".  Next sentence here.")
+        sentences = self._get_sentences('Go. ".  Next sentence here.')
         for s in sentences:
             import re
-            assert len(re.findall(r"[A-Za-z]", s)) >= 3, (
-                f"Fragment should have been filtered: {s!r}"
-            )
+
+            assert (
+                len(re.findall(r"[A-Za-z]", s)) >= 3
+            ), f"Fragment should have been filtered: {s!r}"
 
     def test_normal_sentences_retained(self):
         text = "The cat sat. The dog ran. A bird flew."
@@ -700,6 +722,7 @@ class TestGetSentencesFragmentFiltering:
         sentences = self._get_sentences(text)
         for s in sentences:
             import re
+
             assert len(re.findall(r"[A-Za-z]", s)) >= 3
 
 
@@ -769,6 +792,7 @@ class TestSuspensePromptContent:
 
     def _suspense_block(self) -> str:
         from indextts_mlx.emotion_classifier import _PROMPT_TEMPLATE
+
         # Extract the section between "4 = suspense" and the next label ("5 =")
         start = _PROMPT_TEMPLATE.find("4 = suspense")
         end = _PROMPT_TEMPLATE.find("5 =", start)
@@ -782,36 +806,38 @@ class TestSuspensePromptContent:
 
     def test_dialogue_exclusion_present(self):
         block = self._suspense_block()
-        assert "Dialogue" in block or "dialogue" in block, (
-            "Suspense block must explicitly exclude dialogue"
-        )
+        assert (
+            "Dialogue" in block or "dialogue" in block
+        ), "Suspense block must explicitly exclude dialogue"
 
     def test_character_speech_exclusion_present(self):
         block = self._suspense_block()
         # Must mention excluding sentences spoken by characters
-        assert "character" in block.lower() or "spoken" in block.lower(), (
-            "Suspense block must exclude sentences spoken by a character"
-        )
+        assert (
+            "character" in block.lower() or "spoken" in block.lower()
+        ), "Suspense block must exclude sentences spoken by a character"
 
     def test_fact_report_exclusion_present(self):
         block = self._suspense_block()
         # Must exclude statements of fact / status reports
-        assert "fact" in block.lower() or "status" in block.lower() or "report" in block.lower(), (
-            "Suspense block must exclude statements of fact or status reports"
-        )
+        assert (
+            "fact" in block.lower() or "status" in block.lower() or "report" in block.lower()
+        ), "Suspense block must exclude statements of fact or status reports"
 
     def test_physical_approach_exclusion_present(self):
         block = self._suspense_block()
         # Must exclude plain movement/approach descriptions
-        assert "moving" in block.lower() or "approach" in block.lower() or "physical" in block.lower(), (
-            "Suspense block must exclude physical movement/approach descriptions"
-        )
+        assert (
+            "moving" in block.lower() or "approach" in block.lower() or "physical" in block.lower()
+        ), "Suspense block must exclude physical movement/approach descriptions"
 
     def test_doubt_fallback_to_neutral_present(self):
         block = self._suspense_block()
-        assert "in doubt" in block.lower() or "if unsure" in block.lower() or "neutral" in block.lower(), (
-            "Suspense block must direct classifier to fall back to neutral when in doubt"
-        )
+        assert (
+            "in doubt" in block.lower()
+            or "if unsure" in block.lower()
+            or "neutral" in block.lower()
+        ), "Suspense block must direct classifier to fall back to neutral when in doubt"
 
 
 # ---------------------------------------------------------------------------
@@ -897,9 +923,9 @@ class TestDialoguePreFilter:
         # Starts with " — should be detected as dialogue
         records = clf.classify_text('"Oliver, you must remove yourself from bed.', verbose=False)
         for r in records:
-            assert r.emotion_idx <= 1, (
-                f"Dialogue sentence got emotion {r.emotion_idx}, expected <= 1 (mild_emphasis)"
-            )
+            assert (
+                r.emotion_idx <= 1
+            ), f"Dialogue sentence got emotion {r.emotion_idx}, expected <= 1 (mild_emphasis)"
 
     def test_continuation_dialogue_sentence_not_suspense(self):
         # Two-sentence dialogue: opener on sentence 1, continuation on sentence 2
@@ -907,9 +933,7 @@ class TestDialoguePreFilter:
         text = '"Oliver, you must remove yourself from bed. Priscilla is missing.'
         records = clf.classify_text(text, verbose=False)
         for r in records:
-            assert r.emotion_idx <= 1, (
-                f"Dialogue continuation got emotion {r.emotion_idx}"
-            )
+            assert r.emotion_idx <= 1, f"Dialogue continuation got emotion {r.emotion_idx}"
 
     def test_pure_narration_not_capped(self):
         # Pure narration — the stub returns suspense (4) and it should NOT be
@@ -922,9 +946,9 @@ class TestDialoguePreFilter:
         # All raw labels are 4 (suspense); hysteresis with min_run=2 on a 2-sent
         # sequence means both survive.  Emotion should be 4 for narration.
         raw_labels = [r.raw_emotion_idx for r in records]
-        assert any(label == 4 for label in raw_labels), (
-            "Narration sentences should not be capped — suspense (4) should survive in raw labels"
-        )
+        assert any(
+            label == 4 for label in raw_labels
+        ), "Narration sentences should not be capped — suspense (4) should survive in raw labels"
 
     def test_dialogue_capping_does_not_affect_pause(self):
         # The pause label should be unaffected by the dialogue emotion cap.

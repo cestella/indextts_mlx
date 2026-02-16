@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
 
@@ -62,7 +61,9 @@ class TestQueueManager:
         assert queue.active_job() is None
 
     def test_submit_creates_queued_job(self, queue):
-        job = queue.submit(isbn="978-0-06-112008-4", epub_url="https://example.com/book.epub", voice="v1")
+        job = queue.submit(
+            isbn="978-0-06-112008-4", epub_url="https://example.com/book.epub", voice="v1"
+        )
         assert job["status"] == "queued"
         assert job["isbn"] == "978-0-06-112008-4"
         assert job["dir_name"] == "9780061120084"  # normalized
@@ -92,18 +93,39 @@ class TestQueueManager:
         assert loaded["isbn"] == "999"
         assert loaded["status"] == "queued"
 
-    def test_running_job_marked_interrupted_on_reload(self, tmp_ab_dir):
+    def test_running_job_requeued_when_disk_state_recoverable(self, tmp_ab_dir):
         from indextts_mlx.web.queue_manager import QueueManager, RUNNING
 
         q1 = QueueManager(tmp_ab_dir)
         job = q1.submit(isbn="123", epub_url="https://x.com/b.epub", voice=None)
         q1.update(job["id"], status=RUNNING)
 
-        # Simulate restart
+        # Create some disk state so _detect_stage returns something actionable
+        job_dir = tmp_ab_dir / job["dir_name"]
+        job_dir.mkdir(parents=True, exist_ok=True)
+        chapters_txt = job_dir / "chapters_txt"
+        chapters_txt.mkdir()
+        (chapters_txt / "ch01.txt").write_text("Chapter one.")
+
+        # Simulate restart — job should be re-queued, not interrupted
+        q2 = QueueManager(tmp_ab_dir)
+        reloaded = q2.get_job(job["id"])
+        assert reloaded["status"] == "queued"
+        assert reloaded["start_stage"] is not None
+        assert reloaded["error"] is None
+
+    def test_running_job_marked_interrupted_when_no_disk_state(self, tmp_ab_dir):
+        from indextts_mlx.web.queue_manager import QueueManager, RUNNING
+
+        q1 = QueueManager(tmp_ab_dir)
+        job = q1.submit(isbn="124", epub_url="https://x.com/b.epub", voice=None)
+        q1.update(job["id"], status=RUNNING)
+        # Leave directory empty — _detect_stage returns None
+
         q2 = QueueManager(tmp_ab_dir)
         reloaded = q2.get_job(job["id"])
         assert reloaded["status"] == "interrupted"
-        assert reloaded["error"]  # contains a message
+        assert reloaded["error"]
 
     def test_queued_jobs_survive_reload(self, tmp_ab_dir):
         from indextts_mlx.web.queue_manager import QueueManager
@@ -193,7 +215,11 @@ class TestFlaskRoutes:
     def test_api_submit_valid(self, client):
         r = client.post(
             "/api/submit",
-            json={"isbn": "9780743273565", "epub_url": "https://example.com/book.epub", "voice": "v1"},
+            json={
+                "isbn": "9780743273565",
+                "epub_url": "https://example.com/book.epub",
+                "voice": "v1",
+            },
         )
         assert r.status_code == 201
         data = r.get_json()
@@ -376,12 +402,20 @@ class TestWriteSynthStatus:
         p = tmp_path / "synth_status.json"
         # First file in progress, no completed files yet
         _write_synth_status(
-            p, 0, 5, "ch01.txt", False, 3, 10, [], [7.0, 6.8, 7.2],
+            p,
+            0,
+            5,
+            "ch01.txt",
+            False,
+            3,
+            10,
+            [],
+            [7.0, 6.8, 7.2],
             chunk_audio_times=[10.0, 10.2, 9.8],
         )
         data = json.loads(p.read_text())
-        assert data["chunk_eta_s"] is not None   # chunk ETA works immediately
-        assert data["job_eta_s"] is None          # job ETA needs a completed file
+        assert data["chunk_eta_s"] is not None  # chunk ETA works immediately
+        assert data["job_eta_s"] is None  # job ETA needs a completed file
 
     def test_job_eta_available_after_first_file(self, tmp_path):
         """Job ETA should be non-None once file_wall_times has an entry."""
@@ -389,7 +423,15 @@ class TestWriteSynthStatus:
 
         p = tmp_path / "synth_status.json"
         _write_synth_status(
-            p, 1, 5, "ch02.txt", False, 2, 8, [45.0], [7.0, 6.8],
+            p,
+            1,
+            5,
+            "ch02.txt",
+            False,
+            2,
+            8,
+            [45.0],
+            [7.0, 6.8],
             chunk_audio_times=[10.0, 10.2],
         )
         data = json.loads(p.read_text())
@@ -410,7 +452,15 @@ class TestWriteSynthStatus:
         p = tmp_path / "synth_status.json"
         # 2 chunks: 20s audio in 4s wall → RTF = 5.0
         _write_synth_status(
-            p, 0, 3, "ch01.txt", False, 2, 10, [], [2.0, 2.0],
+            p,
+            0,
+            3,
+            "ch01.txt",
+            False,
+            2,
+            10,
+            [],
+            [2.0, 2.0],
             chunk_audio_times=[10.0, 10.0],
         )
         data = json.loads(p.read_text())
@@ -550,7 +600,7 @@ class TestScanDirs:
         from indextts_mlx.web.queue_manager import QueueManager
 
         d = _make_dir(tmp_ab_dir, "0743273565")
-        (d / "chapters_txt").mkdir()           # empty dir
+        (d / "chapters_txt").mkdir()  # empty dir
         (d / "0743273565.epub").write_bytes(b"fake")
         q = QueueManager(tmp_ab_dir)
         results = q.scan_dirs()

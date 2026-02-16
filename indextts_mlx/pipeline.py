@@ -87,16 +87,16 @@ def _sample_top_k(logits: mx.array, temperature: float = 0.8, top_k: int = 200) 
     if temperature <= 0.0 or top_k <= 1:
         return int(mx.argmax(logits).item())
     logits = logits / temperature
-    # Top-k: zero out everything except the top-k logits
+    # Top-k: mask everything outside the top-k logits
     if top_k < logits.shape[-1]:
-        # Sort descending, keep top_k
         sorted_indices = mx.argsort(-logits)  # descending
-        cutoff = float(logits[sorted_indices[top_k - 1]].item())
+        cutoff = logits[sorted_indices[top_k - 1]]  # stays on device
         logits = mx.where(logits >= cutoff, logits, mx.full(logits.shape, float("-inf")))
-    probs = mx.softmax(logits, axis=-1)
-    # Multinomial sampling via inverse CDF
-    probs_np = np.array(probs)
-    return int(np.random.choice(len(probs_np), p=probs_np / probs_np.sum()))
+    # On-device categorical sampling — avoids NumPy copy and Python RNG per token.
+    # mx.random.categorical expects log-probs with a batch dim.
+    log_probs = mx.log(mx.softmax(logits, axis=-1))
+    token = mx.random.categorical(log_probs[None])[0]
+    return int(token.item())
 
 
 def _resolve_speaker(

@@ -382,7 +382,7 @@ class Segmenter:
         # Strip a spurious trailing "." that appears after a closing quote
         # when the sentence already ended with terminal punctuation before the
         # quote, e.g. '"Ow, fuck!". ' → '"Ow, fuck!"'
-        s = re.sub(r'([!?]")\.$', r'\1', s)
+        s = re.sub(r'([!?]")\.$', r"\1", s)
 
         # Ensure terminal punctuation
         if s and s[-1] not in '.?!"':

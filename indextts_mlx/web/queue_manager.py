@@ -43,12 +43,25 @@ class QueueManager:
             try:
                 data = json.loads(self._queue_file.read_text())
                 self._jobs = data.get("jobs", [])
-                # Any job that was "running" when server died gets marked interrupted
+                # Any job that was "running" when the server died is re-queued
+                # from the stage that can be detected from its directory contents,
+                # so it will be picked up again before any already-queued jobs.
                 for job in self._jobs:
                     if job["status"] == RUNNING:
-                        job["status"] = INTERRUPTED
-                        job["error"] = "Server restarted while job was running"
-                        job["finished_at"] = _now()
+                        job_dir = self.audiobooks_dir / (job.get("dir_name") or "")
+                        start_stage, _ = _detect_stage(job_dir)
+                        if start_stage is not None:
+                            job["status"] = QUEUED
+                            job["start_stage"] = start_stage
+                            job["error"] = None
+                            job["started_at"] = None
+                            job["finished_at"] = None
+                        else:
+                            # Nothing actionable on disk (e.g. killed before writing
+                            # anything); mark interrupted so user can decide.
+                            job["status"] = INTERRUPTED
+                            job["error"] = "Server restarted while job was running"
+                            job["finished_at"] = _now()
                 self._save_locked()
             except Exception:
                 self._jobs = []

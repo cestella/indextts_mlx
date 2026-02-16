@@ -141,6 +141,7 @@ class Worker(threading.Thread):
         # A normal job has no start_stage (or "downloading").
         _STAGE_ORDER = ["downloading", "extracting", "directing", "synthesizing", "packaging"]
         start_stage = job.get("start_stage") or "downloading"
+
         def _should_skip(stage: str) -> bool:
             try:
                 return _STAGE_ORDER.index(stage) < _STAGE_ORDER.index(start_stage)
@@ -210,7 +211,9 @@ class Worker(threading.Thread):
                 stale.unlink(missing_ok=True)
             self.queue.update(jid, stage="synthesizing")
             # Use directed chapters if available (have .jsonl files), else plain txt
-            directed_files = list(chapters_directed.glob("*.jsonl")) if chapters_directed.is_dir() else []
+            directed_files = (
+                list(chapters_directed.glob("*.jsonl")) if chapters_directed.is_dir() else []
+            )
             synth_input = str(chapters_directed) if directed_files else str(chapters_txt)
             synth_cmd = [
                 cmd,

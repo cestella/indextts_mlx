@@ -909,7 +909,7 @@
     const by = job.author ? ` · ${esc(job.author)}` : '';
     const date = fmtDate(job.created_at);
     const canCancel = job.status === 'queued' || job.status === 'running';
-    const canResume = job.status === 'interrupted' || job.status === 'failed';
+    const canResume = job.status === 'interrupted' || job.status === 'failed' || job.status === 'cancelled';
     const cancelBtn = canCancel
       ? `<button class="btn btn-danger btn-sm" onclick="cancelJob('${esc(job.id)}')">Cancel</button>`
       : '';

@@ -7,7 +7,6 @@ import pytest
 import numpy as np
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # --llm flag: opt-in to tests that load the real LLM
 # ---------------------------------------------------------------------------
@@ -20,12 +19,23 @@ def pytest_addoption(parser):
         default=False,
         help="Run tests marked @pytest.mark.llm (loads the real LLM; slow).",
     )
+    parser.addoption(
+        "--bench",
+        action="store_true",
+        default=False,
+        help="Run timing benchmarks (test_bigvgan_alias_free_perf.py etc).",
+    )
 
 
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "llm: tests that load the real LLM (skipped by default; run with --llm)"
     )
+
+
+@pytest.fixture
+def run_bench(request):
+    return request.config.getoption("--bench")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -40,8 +50,10 @@ def pytest_collection_modifyitems(config, items):
 def classifier_llm():
     """Session-scoped real EmotionClassifier with the LLM loaded once."""
     from indextts_mlx.emotion_classifier import ClassifierConfig, EmotionClassifier
+
     cfg = ClassifierConfig(use_boundary_detection=False)
     return EmotionClassifier(cfg)
+
 
 # Default weights dir — can override with env var
 WEIGHTS_DIR = Path(

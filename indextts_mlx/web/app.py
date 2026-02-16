@@ -165,7 +165,12 @@ def create_app(
             job_dir = audiobooks_dir / dir_name
             start_stage, _ = _detect_stage(job_dir)
             if start_stage is None:
-                return jsonify({"error": "Cannot detect resume stage — directory empty or already done"}), 400
+                return (
+                    jsonify(
+                        {"error": "Cannot detect resume stage — directory empty or already done"}
+                    ),
+                    400,
+                )
 
         job = queue.resume(
             dir_name=dir_name,

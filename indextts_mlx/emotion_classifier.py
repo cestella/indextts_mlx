@@ -543,7 +543,9 @@ class EmotionClassifier:
             List of SentenceRecord, one per sentence, with smoothed emotions.
         """
         text = Path(text_path).read_text(encoding="utf-8")
-        return self.classify_text(text, chapter_id=chapter_id, verbose=verbose, on_sentence=on_sentence, head=head)
+        return self.classify_text(
+            text, chapter_id=chapter_id, verbose=verbose, on_sentence=on_sentence, head=head
+        )
 
     def classify_text(
         self,

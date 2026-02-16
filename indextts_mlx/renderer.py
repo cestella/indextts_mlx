@@ -59,6 +59,7 @@ def _resolve_pause_ms(pause_after, pauses: dict[str, int]) -> int:
         return pauses.get(pause_after, 0)
     return 0
 
+
 # Sentinel so we can distinguish "not passed" from None
 _UNSET = object()
 
@@ -382,8 +383,10 @@ def render_segments_jsonl(
             if verbose:
                 preview = text[:60] + ("..." if len(text) > 60 else "")
                 _emo_str = emotion_label or "neutral"
-                _pause_str = _pa_label if isinstance(_pa_label, str) else (
-                    f"{pause_after}ms" if pause_after else "none"
+                _pause_str = (
+                    _pa_label
+                    if isinstance(_pa_label, str)
+                    else (f"{pause_after}ms" if pause_after else "none")
                 )
                 tag = f" emo={_emo_str}, pause={_pause_str}"
                 if chunk_resolver is not None and emotion_label:

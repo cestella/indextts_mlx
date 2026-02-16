@@ -113,28 +113,20 @@ class LowPassFilter1d(nn.Module):
         """
         B, T, C = x.shape
 
-        # Transpose to (B, C, T) for padding
+        # (B, T, C) → (B, C, T) for padding
         x = x.transpose(0, 2, 1)
 
         if self.padding:
-            # Replicate padding
             x = mx.pad(x, [(0, 0), (0, 0), (self.pad_left, self.pad_right)], mode="edge")
 
-        # Convert to (B, T+pad, C) for conv1d
-        x = x.transpose(0, 2, 1)
+        # Fold channels into batch: (B, C, T+pad) → (B*C, T+pad, 1)
+        # This lets a single conv1d kernel handle all channels at once instead
+        # of dispatching one kernel per channel (MLX has no groups= parameter).
+        x = x.reshape(B * C, -1, 1)
+        out = mx.conv1d(x, self.filter.transpose(0, 2, 1), stride=self.stride)  # (B*C, T', 1)
 
-        # Apply depthwise convolution manually (one filter per channel)
-        # MLX doesn't have groups parameter, so we apply per-channel
-        outputs = []
-        for c in range(C):
-            channel_data = x[:, :, c : c + 1]  # (B, T+pad, 1)
-            # Filter shape for conv1d: (out_ch, kernel, in_ch) = (1, kernel, 1)
-            filtered = mx.conv1d(channel_data, self.filter.transpose(0, 2, 1), stride=self.stride)
-            outputs.append(filtered)
-
-        result = mx.concatenate(outputs, axis=2)  # (B, T', C)
-
-        return result
+        T_out = out.shape[1]
+        return out.reshape(B, C, T_out).transpose(0, 2, 1)  # (B, T', C)
 
 
 class UpSample1d(nn.Module):
@@ -168,26 +160,18 @@ class UpSample1d(nn.Module):
         """
         B, T, C = x.shape
 
-        # Transpose to (B, C, T)
+        # (B, T, C) → (B, C, T), pad, fold into batch → (B*C, T+pad, 1)
         x = x.transpose(0, 2, 1)
-
-        # Replicate padding
         x = mx.pad(x, [(0, 0), (0, 0), (self.pad, self.pad)], mode="edge")
+        x = x.reshape(B * C, -1, 1)
 
-        # Transpose to (B, T+pad, C)
-        x = x.transpose(0, 2, 1)
+        # Single conv_transpose1d dispatch instead of one per channel.
+        out = mx.conv_transpose1d(
+            x, self.filter.transpose(0, 2, 1), stride=self.stride
+        )  # (B*C, T_up, 1)
 
-        # Apply transposed convolution per channel (depthwise)
-        # Filter shape for conv_transpose1d: (out_ch, kernel, in_ch) = (1, kernel, 1)
-        outputs = []
-        for c in range(C):
-            channel_data = x[:, :, c : c + 1]  # (B, T+pad, 1)
-            upsampled = mx.conv_transpose1d(
-                channel_data, self.filter.transpose(0, 2, 1), stride=self.stride  # (1, kernel, 1)
-            )
-            outputs.append(upsampled)
-
-        result = mx.concatenate(outputs, axis=2)  # (B, T_up, C)
+        T_up = out.shape[1]
+        result = out.reshape(B, C, T_up).transpose(0, 2, 1)  # (B, T_up, C)
 
         # Trim edges
         if self.pad_right > 0:

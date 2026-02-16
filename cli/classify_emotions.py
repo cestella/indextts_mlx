@@ -209,6 +209,7 @@ def classify_emotions(
 
         try:
             from tqdm import tqdm as _tqdm
+
             _iter = _tqdm(pending, desc="classify", unit="file")
         except ImportError:
             _iter = pending
