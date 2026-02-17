@@ -32,6 +32,23 @@ def _build_config(weights_dir, bpe_model):
     return WeightsConfig(**kwargs)
 
 
+def _maybe_resolve_meta_voice(voices_dir, voice, spk_audio_prompt, emotion_label=None):
+    """If voice is a meta voice directory, resolve to a concrete .wav path.
+
+    Returns (voice, spk_audio_prompt) — voice is cleared to None when resolved.
+    For plain-text synthesis (no per-segment emotion), pass emotion_label=None
+    to default to 'neutral'.
+    """
+    if voice is not None and voices_dir is not None and spk_audio_prompt is None:
+        from indextts_mlx.voices import is_meta_voice, resolve_meta_voice
+        if is_meta_voice(voices_dir, voice):
+            resolved = resolve_meta_voice(
+                voices_dir, voice, emotion_label=emotion_label, fallback="neutral"
+            )
+            return None, str(resolved)
+    return voice, spk_audio_prompt
+
+
 def _effective_emo_alpha(emo_alpha, emo_vector, emo_text, emo_audio_prompt):
     """Auto-set emo_alpha=1.0 when emo_audio_prompt is provided and the user left it at 0."""
     if emo_audio_prompt is not None and emo_alpha == 0.0:
@@ -601,6 +618,30 @@ def synthesize(
             if inp.suffix.lower() == ".jsonl":
                 # render_segments_jsonl always writes WAV; use a temp path then convert
                 wav_out = out_file if ext == "wav" else out_file.with_suffix(".wav.tmp")
+
+                _chunk_wall_times: list[float] = []
+                _chunk_audio_times: list[float] = []
+                _cur_file_idx = _file_idx
+                _cur_inp_name = inp.name
+
+                def _jsonl_on_chunk_done(i, total, stats,
+                                         _fi=_cur_file_idx, _fn=_cur_inp_name):
+                    _chunk_wall_times.append(stats["wall_time_s"])
+                    _chunk_audio_times.append(stats["audio_duration_s"])
+                    if _status_path:
+                        _write_synth_status(
+                            _status_path,
+                            _fi,
+                            len(pending),
+                            _fn,
+                            False,
+                            i + 1,
+                            total,
+                            _file_wall_times,
+                            _chunk_wall_times,
+                            _chunk_audio_times,
+                        )
+
                 render_segments_jsonl(
                     jsonl_path=inp,
                     output_path=wav_out,
@@ -632,6 +673,7 @@ def synthesize(
                     emotion_config=emotion_config,
                     enable_drift=enable_drift,
                     end_chime=end_chime,
+                    on_chunk_done=_jsonl_on_chunk_done,
                     verbose=True,
                 )
                 if ext != "wav":
@@ -724,12 +766,13 @@ def synthesize(
                             _chunk_audio_times,
                         )
 
+                _voice, _spk = _maybe_resolve_meta_voice(voices_dir, voice, spk_audio_prompt)
                 audio = synthesize_long(
                     input_text,
                     tts=tts,
-                    spk_audio_prompt=spk_audio_prompt,
+                    spk_audio_prompt=_spk,
                     voices_dir=voices_dir,
-                    voice=voice,
+                    voice=_voice,
                     emotion=emotion,
                     emo_alpha=emo_alpha,
                     emo_vector=parsed_emo_vector,
@@ -882,6 +925,7 @@ def synthesize(
 
     _on_chunk, _on_chunk_done = _make_verbose_callbacks()
 
+    voice, spk_audio_prompt = _maybe_resolve_meta_voice(voices_dir, voice, spk_audio_prompt)
     audio = synthesize_long(
         input_text,
         tts=tts,

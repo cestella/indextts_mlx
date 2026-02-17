@@ -183,6 +183,8 @@ def render_segments_jsonl(
     enable_drift: bool = False,
     # Optional audio file appended after the last segment (e.g. a chapter-end chime)
     end_chime: Optional[Union[str, Path]] = None,
+    # Optional callback invoked after each chunk: fn(chunk_index, total_chunks, stats)
+    on_chunk_done: Optional[callable] = None,
     verbose: bool = True,
 ) -> np.ndarray:
     """Render a JSONL chapter file to a single WAV.
@@ -340,6 +342,22 @@ def render_segments_jsonl(
                 seg_emo_alpha = preset.base.emo_alpha
                 chunk_resolver = resolver
 
+        # ── Meta voice resolution ─────────────────────────────────────────────
+        # If the voice name resolves to a directory, treat it as a meta voice:
+        # pick a random .wav from the matching emotion subdirectory (no drift).
+        _meta_voice_clip = None
+        if seg_voice is not None and seg_voices_dir is not None and seg_spk is None:
+            from .voices import is_meta_voice, resolve_meta_voice
+            if is_meta_voice(seg_voices_dir, seg_voice):
+                seg_spk = resolve_meta_voice(
+                    seg_voices_dir,
+                    seg_voice,
+                    emotion_label=emotion_label,
+                    fallback="neutral",
+                )
+                _meta_voice_clip = seg_spk
+                seg_voice = None
+
         # Resolve effective spk source string for cache key
         if seg_spk is not None:
             spk_source_key = str(seg_spk)
@@ -389,7 +407,9 @@ def render_segments_jsonl(
                     else (f"{pause_after}ms" if pause_after else "none")
                 )
                 tag = f" emo={_emo_str}, pause={_pause_str}"
-                if chunk_resolver is not None and emotion_label:
+                if _meta_voice_clip is not None:
+                    tag += f" [ref={_meta_voice_clip.name}]"
+                elif chunk_resolver is not None and emotion_label:
                     tag += f" [drift active, base α={seg_emo_alpha:.3f}]"
                 print(
                     f"  [{idx+1}/{total_segments}] seg={seg_id!r}{tag}"
@@ -408,6 +428,8 @@ def render_segments_jsonl(
                         f" | wall: {stats['wall_time_s']:.1f}s"
                         f" | {stats['realtime_factor']:.1f}x realtime"
                     )
+                if on_chunk_done is not None:
+                    on_chunk_done(i, total, stats)
 
             seg_audio = synthesize_long(
                 text,
@@ -478,7 +500,7 @@ def render_segments_jsonl(
         full_audio = np.concatenate([full_audio, chime_audio])
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(str(output_path), full_audio, sample_rate)
+    sf.write(str(output_path), full_audio, sample_rate, format="WAV")
 
     if verbose:
         total_dur = len(full_audio) / sample_rate

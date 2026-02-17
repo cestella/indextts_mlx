@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
+import random
 import warnings
 from pathlib import Path
 from typing import List, Optional
 
 
 def list_voices(voices_dir: str | Path) -> List[str]:
-    """Return sorted list of voice names (stems) available in voices_dir.
+    """Return sorted list of voice names available in voices_dir.
 
-    A voice is any .wav file directly under voices_dir.
+    Includes both plain voices (.wav files) and meta voices (directories
+    containing emotion-labelled subdirectories of .wav clips).
     """
     d = Path(voices_dir)
     if not d.is_dir():
         raise FileNotFoundError(f"voices_dir not found: {d}")
-    return sorted(p.stem for p in d.iterdir() if p.suffix.lower() == ".wav")
+    names = []
+    for p in d.iterdir():
+        if p.suffix.lower() == ".wav":
+            names.append(p.stem)
+        elif p.is_dir():
+            names.append(p.name)
+    return sorted(names)
 
 
 def resolve_voice(voices_dir: str | Path, voice: str) -> Path:
@@ -55,6 +63,56 @@ def resolve_voice(voices_dir: str | Path, voice: str) -> Path:
     available = list_voices(d)
     avail_str = ", ".join(available) if available else "(none)"
     raise FileNotFoundError(f"Voice '{voice}' not found in {d}. Available voices: {avail_str}")
+
+
+def is_meta_voice(voices_dir: str | Path, voice: str) -> bool:
+    """Return True if voice resolves to a directory (a meta voice).
+
+    A meta voice is a directory (or symlink to a directory) whose subdirectories
+    are named after emotion labels and contain .wav reference clips.
+    """
+    return (Path(voices_dir) / voice).is_dir()
+
+
+def resolve_meta_voice(
+    voices_dir: str | Path,
+    voice: str,
+    emotion_label: Optional[str] = None,
+    fallback: str = "neutral",
+) -> Path:
+    """Pick a random .wav from the emotion subdirectory of a meta voice.
+
+    Looks in ``voices_dir/voice/emotion_label/*.wav``.  If the requested
+    emotion subdirectory is missing or empty, falls back to ``fallback``
+    (default ``"neutral"``).
+
+    Raises FileNotFoundError if no .wav files can be found in either the
+    requested emotion directory or the fallback.
+    """
+    voice_dir = Path(voices_dir) / voice
+    label = emotion_label or fallback
+
+    def _wavs(lbl: str) -> list[Path]:
+        sub = voice_dir / lbl
+        if sub.is_dir():
+            return [p for p in sub.iterdir() if p.suffix.lower() == ".wav"]
+        return []
+
+    wavs = _wavs(label)
+    if not wavs:
+        if label != fallback:
+            warnings.warn(
+                f"Meta voice '{voice}': no .wav files in '{label}/'; "
+                f"falling back to '{fallback}'.",
+                stacklevel=2,
+            )
+            wavs = _wavs(fallback)
+    if not wavs:
+        raise FileNotFoundError(
+            f"Meta voice '{voice}': no .wav files found in '{label}/' or "
+            f"'{fallback}/' under {voice_dir}"
+        )
+    return random.choice(wavs)
 
 
 def parse_emo_vector(raw: str | list) -> List[float]:

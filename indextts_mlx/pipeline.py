@@ -32,6 +32,31 @@ from sentencepiece import SentencePieceProcessor
 # Output sample rate
 OUTPUT_SAMPLE_RATE = 22050
 
+
+def _lufs_normalize(audio: np.ndarray, sr: int, target_lufs: float = -16.0) -> np.ndarray:
+    """Normalize audio to a target integrated loudness (LUFS / EBU R128).
+
+    Uses pyloudnorm if available; falls back to RMS normalization otherwise.
+    Clips are clamped to [-1, 1] after normalization.
+    """
+    try:
+        import pyloudnorm as pyln
+        meter = pyln.Meter(sr)
+        loudness = meter.integrated_loudness(audio.astype(np.float64))
+        if np.isfinite(loudness):
+            audio = pyln.normalize.loudness(
+                audio.astype(np.float64), loudness, target_lufs
+            ).astype(np.float32)
+            return np.clip(audio, -1.0, 1.0)
+    except Exception:
+        pass
+    # RMS fallback
+    rms = float(np.sqrt(np.mean(audio ** 2)))
+    if rms > 0:
+        target_rms = 10 ** (target_lufs / 20.0)
+        audio = audio * (target_rms / rms)
+    return np.clip(audio, -1.0, 1.0).astype(np.float32)
+
 # Character substitutions applied before BPE tokenization.
 # Mirrors the `char_rep_map` in the original TextNormalizer so that
 # punctuation the BPE vocabulary doesn't contain (e.g. straight ASCII `"`)
@@ -211,6 +236,7 @@ class IndexTTS2:
                     "sample_rate must be provided when reference_audio is a numpy array"
                 )
 
+        audio = _lufs_normalize(audio, sr)
         audio_16k = librosa.resample(audio, orig_sr=sr, target_sr=16000).astype(np.float32)[
             : 15 * 16000
         ]

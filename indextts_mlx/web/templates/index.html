@@ -773,6 +773,19 @@
 
   // ── render helpers ───────────────────────────────────────────────────────
 
+  function renderJobParams(job) {
+    const parts = [];
+    if (job.voice)           parts.push(`voice: ${esc(job.voice)}`);
+    if (job.emotion != null) parts.push(`emo: ${job.emotion}`);
+    if (job.steps != null)   parts.push(`steps: ${job.steps}`);
+    if (job.temperature != null) parts.push(`temp: ${job.temperature}`);
+    if (job.cfg_rate != null)    parts.push(`cfg: ${job.cfg_rate}`);
+    if (job.token_target != null) parts.push(`tok: ${job.token_target}`);
+    if (job.direct_narration)    parts.push(`directed`);
+    if (!parts.length) return '';
+    return `<div style="font-size:0.7rem;color:var(--text-dim);margin-top:3px;">${parts.join(' · ')}</div>`;
+  }
+
   function renderStageBadge(stage) {
     if (!stage) return '';
     const label = stage.charAt(0).toUpperCase() + stage.slice(1);
@@ -885,7 +898,8 @@
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
         <div>
           <div style="margin-bottom:4px">${title}</div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          ${renderJobParams(job)}
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px;">
             ${stageHTML}
             <span style="font-size:0.75rem;color:var(--text-dim)">Started ${fmtDate(job.started_at)}</span>
           </div>
@@ -932,6 +946,7 @@
         <div class="job-info">
           <div class="job-isbn">${title}${by}</div>
           <div class="job-meta">${date} · ${esc(job.isbn)}</div>
+          ${renderJobParams(job)}
           ${errNote}
         </div>
         <div class="job-actions">
