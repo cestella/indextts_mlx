@@ -214,13 +214,36 @@ class M4bCreator:
         return cmd
 
     def _execute_command(self, cmd: list, verbose: bool = False) -> None:
-        """Execute m4b-tool command."""
-        result = subprocess.run(cmd, capture_output=not verbose, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"m4b-tool failed with exit code {result.returncode}:\n"
-                + (result.stderr if result.stderr else "")
+        """Execute m4b-tool command with exponential-backoff retry for up to 10 minutes."""
+        import time as _time
+
+        deadline = _time.monotonic() + 600  # 10-minute window
+        delay = 5.0
+        attempt = 0
+
+        while True:
+            attempt += 1
+            result = subprocess.run(cmd, capture_output=not verbose, text=True)
+            if result.returncode == 0:
+                return
+
+            err = result.stderr if result.stderr else ""
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    f"m4b-tool failed after {attempt} attempt(s) "
+                    f"(exit {result.returncode}):\n{err}"
+                )
+
+            wait = min(delay, remaining)
+            print(
+                f"m4b-tool failed (exit {result.returncode}), attempt {attempt}. "
+                f"Retrying in {wait:.0f}s ({remaining:.0f}s remaining)..."
             )
+            if err:
+                print(f"  stderr: {err[:200]}")
+            _time.sleep(wait)
+            delay = min(delay * 2, 120)  # cap at 2-minute intervals
 
     def __repr__(self) -> str:
         return f"M4bCreator(args={self.config.m4b_tool_args})"

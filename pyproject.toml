@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "indextts-mlx"
 version = "0.1.0"
 description = "IndexTTS-2 TTS inference on Apple Silicon via MLX"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "mlx>=0.21",
     "mlx-lm>=0.20",
@@ -23,6 +23,9 @@ dependencies = [
     "lxml",
     "flask>=3.0",
     "pyloudnorm",
+    "mutagen",
+    "pyyaml",
+    "apscheduler>=3.10,<4",
 ]
 
 [project.optional-dependencies]

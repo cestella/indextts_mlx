@@ -79,15 +79,28 @@ def _write_synth_status(
     file_wall_times: list,
     chunk_wall_times: list,
     chunk_audio_times: list | None = None,
+    chars_done: int | None = None,
+    total_chars: int | None = None,
 ) -> None:
     """Atomically write a JSON status snapshot for the web UI to poll."""
     import json as _json
 
-    mean_chunk = sum(chunk_wall_times) / len(chunk_wall_times) if chunk_wall_times else None
     mean_file = sum(file_wall_times) / len(file_wall_times) if file_wall_times else None
     chunks_left = total_chunks - chunk_index
     files_left = total_files - file_index - (1 if file_done else 0)
-    chunk_eta = mean_chunk * chunks_left if mean_chunk else None
+
+    # File ETA: use character throughput when available (more accurate than
+    # chunk-count since segments vary wildly in length), otherwise fall back to
+    # mean-chunk * chunks_remaining.
+    if chars_done and total_chars and chars_done > 0 and chunk_wall_times:
+        total_wall = sum(chunk_wall_times)
+        secs_per_char = total_wall / chars_done
+        chars_remaining = max(0, total_chars - chars_done)
+        chunk_eta: float | None = secs_per_char * chars_remaining
+    else:
+        mean_chunk = sum(chunk_wall_times) / len(chunk_wall_times) if chunk_wall_times else None
+        chunk_eta = mean_chunk * chunks_left if mean_chunk else None
+
     # Job ETA requires at least one completed file to estimate per-file cost.
     # Until then it's unknown — don't conflate it with chunk ETA.
     job_eta = mean_file * files_left if (mean_file and files_left > 0) else None
@@ -111,7 +124,7 @@ def _write_synth_status(
         "files_remaining": files_left,
         "chunk_eta_s": round(chunk_eta, 1) if chunk_eta is not None else None,
         "job_eta_s": round(job_eta, 1) if job_eta is not None else None,
-        "avg_wall_s_per_chunk": round(mean_chunk, 2) if mean_chunk else None,
+        "avg_wall_s_per_chunk": round(sum(chunk_wall_times) / len(chunk_wall_times), 2) if chunk_wall_times else None,
         "rtf": rtf,
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
@@ -624,6 +637,22 @@ def synthesize(
                 _cur_file_idx = _file_idx
                 _cur_inp_name = inp.name
 
+                # Pre-compute total chars in this file so we can extrapolate ETA
+                # from the rate (seconds / char) observed on completed chunks.
+                import json as _json
+                _total_chars = sum(
+                    len(_json.loads(ln).get("text", ""))
+                    for ln in inp.read_text().splitlines()
+                    if ln.strip() and not ln.strip().startswith("#")
+                )
+                # Mutable accumulators (list containers so closures can mutate).
+                _chars_done = [0]   # chars synthesised so far
+
+                def _jsonl_on_chunk(i, total, chunk_text):
+                    # Fired before synthesis — add this chunk's char count to the
+                    # running total so the ETA denominator is always current.
+                    _chars_done[0] += len(chunk_text)
+
                 def _jsonl_on_chunk_done(i, total, stats,
                                          _fi=_cur_file_idx, _fn=_cur_inp_name):
                     _chunk_wall_times.append(stats["wall_time_s"])
@@ -640,6 +669,8 @@ def synthesize(
                             _file_wall_times,
                             _chunk_wall_times,
                             _chunk_audio_times,
+                            chars_done=_chars_done[0],
+                            total_chars=_total_chars,
                         )
 
                 render_segments_jsonl(
@@ -673,6 +704,7 @@ def synthesize(
                     emotion_config=emotion_config,
                     enable_drift=enable_drift,
                     end_chime=end_chime,
+                    on_chunk=_jsonl_on_chunk,
                     on_chunk_done=_jsonl_on_chunk_done,
                     verbose=True,
                 )

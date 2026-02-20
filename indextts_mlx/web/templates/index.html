@@ -394,6 +394,10 @@
             <label for="token_target">Token target</label>
             <input type="number" id="token_target" name="token_target" value="50" min="50" max="550">
           </div>
+          <div>
+            <label for="priority">Priority <span style="color:var(--text-dim)">(0=urgent, 10=normal)</span></label>
+            <input type="number" id="priority" name="priority" value="10" min="0" max="100">
+          </div>
           <div style="display:flex;align-items:center;gap:8px;padding-top:4px;">
             <input type="checkbox" id="direct_narration" name="direct_narration" style="width:auto">
             <label for="direct_narration" style="margin-bottom:0;cursor:pointer;">
@@ -513,6 +517,7 @@
       emotion: parseFloat(document.getElementById('emotion').value),
       token_target: parseInt(document.getElementById('token_target').value),
       direct_narration: document.getElementById('direct_narration').checked,
+      priority: parseInt(document.getElementById('priority').value) || 10,
     };
     try {
       const r = await fetch('/api/submit', {
@@ -541,6 +546,18 @@
       const r = await fetch('/api/cancel/' + jobId, {method:'POST'});
       if (!r.ok) throw new Error('Cancel failed');
       toast('Job cancelled');
+      pollNow();
+    } catch(err) {
+      toast(err.message, true);
+    }
+  }
+
+  // ── queue reorder ─────────────────────────────────────────────────────────
+
+  async function moveJob(jobId, dir) {
+    try {
+      const r = await fetch(`/api/queue/move/${jobId}/${dir}`, {method:'POST'});
+      if (!r.ok) return;   // already at edge — silently ignore
       pollNow();
     } catch(err) {
       toast(err.message, true);
@@ -670,6 +687,10 @@
                 <label>Token target</label>
                 <input type="number" id="${uid}_token_target" value="${d.token_target ?? 50}" min="50" max="550">
               </div>
+              <div>
+                <label>Priority <span style="color:var(--text-dim);font-size:0.8rem;">(0=urgent, 10=normal)</span></label>
+                <input type="number" id="${uid}_priority" value="10" min="0" max="100">
+              </div>
             </div>
             <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
               <input type="checkbox" id="${uid}_direct_narration" style="width:auto" ${d.direct_narration ? 'checked' : ''}>
@@ -707,6 +728,7 @@
     const emotion = parseFloat(document.getElementById(uid + '_emotion').value) || 1.0;
     const tokenTarget = parseInt(document.getElementById(uid + '_token_target').value) || 50;
     const directNarration = document.getElementById(uid + '_direct_narration')?.checked || false;
+    const priority = parseInt(document.getElementById(uid + '_priority')?.value) || 10;
     try {
       const r = await fetch('/api/resume', {
         method: 'POST',
@@ -718,6 +740,7 @@
           start_stage: startStage,
           steps, emotion, token_target: tokenTarget,
           direct_narration: directNarration,
+          priority,
         }),
       });
       const j = await r.json();
@@ -748,6 +771,7 @@
     const emotion = parseFloat(document.getElementById(uid + '_emotion').value) || 1.0;
     const tokenTarget = parseInt(document.getElementById(uid + '_token_target').value) || 50;
     const directNarration = document.getElementById(uid + '_direct_narration')?.checked || false;
+    const priority = parseInt(document.getElementById(uid + '_priority')?.value) || 10;
     try {
       const r = await fetch('/api/resume', {
         method: 'POST',
@@ -759,6 +783,7 @@
           // start_stage omitted — backend will auto-detect from directory
           steps, emotion, token_target: tokenTarget,
           direct_narration: directNarration,
+          priority,
         }),
       });
       const j = await r.json();
@@ -782,6 +807,7 @@
     if (job.cfg_rate != null)    parts.push(`cfg: ${job.cfg_rate}`);
     if (job.token_target != null) parts.push(`tok: ${job.token_target}`);
     if (job.direct_narration)    parts.push(`directed`);
+    if (job.priority != null && job.priority !== 10) parts.push(`pri: ${job.priority}`);
     if (!parts.length) return '';
     return `<div style="font-size:0.7rem;color:var(--text-dim);margin-top:3px;">${parts.join(' · ')}</div>`;
   }
@@ -792,10 +818,17 @@
     return `<span class="stage-badge stage-${esc(stage)}">${esc(label)}</span>`;
   }
 
+  function jobLabel(job) {
+    if (job.title) return job.title;
+    if (job.isbn) return job.isbn;
+    if (job.podcast_name) return `Podcast: ${job.podcast_name}`;
+    return '(unknown)';
+  }
+
   function renderActiveJob(job, synth, cls) {
     if (!job) return '';
     const stageHTML = renderStageBadge(job.stage);
-    const title = job.title ? `<strong>${esc(job.title)}</strong>` : `ISBN ${esc(job.isbn)}`;
+    const title = job.title ? `<strong>${esc(job.title)}</strong>` : esc(jobLabel(job));
 
     let progressHTML = '';
     let statsHTML = '';
@@ -827,7 +860,7 @@
       statsHTML = `
         <div class="stat-grid">
           <div class="stat-box">
-            <div class="stat-label">Sentence ETA</div>
+            <div class="stat-label">File ETA</div>
             <div class="stat-value accent">${sentEtaVal}</div>
           </div>
           <div class="stat-box">
@@ -868,7 +901,7 @@
       statsHTML = `
         <div class="stat-grid">
           <div class="stat-box">
-            <div class="stat-label">Chunk ETA</div>
+            <div class="stat-label">File ETA</div>
             <div class="stat-value accent">${fmtEta(synth.chunk_eta_s)}</div>
           </div>
           <div class="stat-box">
@@ -919,13 +952,20 @@
   }
 
   function renderJobItem(job, uid) {
-    const title = job.title ? esc(job.title) : `ISBN ${esc(job.isbn)}`;
+    const title = esc(jobLabel(job));
     const by = job.author ? ` · ${esc(job.author)}` : '';
     const date = fmtDate(job.created_at);
     const canCancel = job.status === 'queued' || job.status === 'running';
+    const canReorder = job.status === 'queued';
     const canResume = job.status === 'interrupted' || job.status === 'failed' || job.status === 'cancelled';
     const cancelBtn = canCancel
       ? `<button class="btn btn-danger btn-sm" onclick="cancelJob('${esc(job.id)}')">Cancel</button>`
+      : '';
+    const moveUpBtn = canReorder
+      ? `<button class="btn btn-sm" title="Move up" onclick="moveJob('${esc(job.id)}','up')" style="padding:2px 7px;font-size:0.85rem;">↑</button>`
+      : '';
+    const moveDownBtn = canReorder
+      ? `<button class="btn btn-sm" title="Move down" onclick="moveJob('${esc(job.id)}','down')" style="padding:2px 7px;font-size:0.85rem;">↓</button>`
       : '';
     const resumeBtn = canResume
       ? `<button class="btn btn-import btn-sm" id="rbtn_${uid}" onclick="toggleJobResumePanel('${uid}')">Resume</button>`
@@ -952,7 +992,7 @@
         <div class="job-actions">
           ${m4bLink}${epubLink}
           <span class="${statusClass(job.status)}">${esc(job.status)}</span>
-          ${cancelBtn}${resumeBtn}
+          ${moveUpBtn}${moveDownBtn}${cancelBtn}${resumeBtn}
         </div>
       </div>`;
 
@@ -986,6 +1026,10 @@
           <div>
             <label>Token target</label>
             <input type="number" id="${uid}_token_target" value="${job.token_target ?? 50}" min="50" max="550">
+          </div>
+          <div>
+            <label>Priority <span style="color:var(--text-dim);font-size:0.8rem;">(0=urgent, 10=normal)</span></label>
+            <input type="number" id="${uid}_priority" value="${job.priority ?? 10}" min="0" max="100">
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
@@ -1037,7 +1081,7 @@
         activeCard.style.display = '';
         activeContent.innerHTML = renderActiveJob(data.active, data.synth_status, data.classify_status);
         document.getElementById('header-status').textContent =
-          (data.active.title || data.active.isbn) + ' — ' + (data.active.stage || 'running');
+          jobLabel(data.active) + ' — ' + (data.active.stage || 'running');
       } else {
         activeCard.style.display = 'none';
         document.getElementById('header-status').textContent = 'Ready';

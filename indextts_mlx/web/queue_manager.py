@@ -27,6 +27,27 @@ FAILED = "failed"
 CANCELLED = "cancelled"
 INTERRUPTED = "interrupted"
 
+# Priority values (lower number = higher priority).
+# URGENT_PRIORITY (0): preempts any non-urgent running job.
+# DEFAULT_PRIORITY (10): used for all regular audiobook submissions.
+# Podcast configs may override via their own priority field (default 0).
+URGENT_PRIORITY = 0
+DEFAULT_PRIORITY = 10
+
+# Map previously-persisted priority values to the current scheme.
+# History: old descending scheme (10/5/0) → ascending tiers (1/2/3) → current (0/9/10).
+#
+# IMPORTANT: 0 and 10 are omitted deliberately — they are valid in the current
+# scheme (URGENT_PRIORITY=0, DEFAULT_PRIORITY=10) and must not be remapped.
+# Only the previous ascending-tier values (1/2/3) and the old intermediate
+# "interrupted" value (5) are unambiguously legacy.
+_LEGACY_PRIORITY_MAP = {
+    5: DEFAULT_PRIORITY - 1,  # old descending "interrupted" → current interrupted (9)
+    1: URGENT_PRIORITY,       # previous ascending "podcast" tier → urgent (0)
+    2: DEFAULT_PRIORITY - 1,  # previous ascending "interrupted" tier → interrupted (9)
+    3: DEFAULT_PRIORITY,      # previous ascending "normal" tier → normal (10)
+}
+
 
 class QueueManager:
     def __init__(self, audiobooks_dir: Path):
@@ -34,6 +55,7 @@ class QueueManager:
         self._lock = threading.Lock()
         self._queue_file = self.audiobooks_dir / ".queue.json"
         self._jobs: list[dict] = []
+        self._next_seq: int = 0
         self._load()
 
     # ── persistence ──────────────────────────────────────────────────────────
@@ -47,6 +69,20 @@ class QueueManager:
                 # from the stage that can be detected from its directory contents,
                 # so it will be picked up again before any already-queued jobs.
                 for job in self._jobs:
+                    # Migrate legacy priority values to the new tier constants.
+                    # Old scheme: higher number = higher priority (10/5/0).
+                    # New scheme: lower number = higher priority (1/2/3).
+                    old_pri = job.get("priority")
+                    if old_pri in _LEGACY_PRIORITY_MAP:
+                        job["priority"] = _LEGACY_PRIORITY_MAP[old_pri]
+                    elif old_pri is None:
+                        job["priority"] = DEFAULT_PRIORITY
+
+                    # Backfill queue_seq for jobs from older queue files.
+                    if "queue_seq" not in job:
+                        job["queue_seq"] = self._next_seq
+                        self._next_seq += 1
+
                     if job["status"] == RUNNING:
                         job_dir = self.audiobooks_dir / (job.get("dir_name") or "")
                         start_stage, _ = _detect_stage(job_dir)
@@ -62,12 +98,24 @@ class QueueManager:
                             job["status"] = INTERRUPTED
                             job["error"] = "Server restarted while job was running"
                             job["finished_at"] = _now()
+                # Ensure _next_seq is above every existing seq so new jobs
+                # always get a unique, higher sequence number.
+                if self._jobs:
+                    self._next_seq = max(
+                        j.get("queue_seq", 0) for j in self._jobs
+                    ) + 1
                 self._save_locked()
             except Exception:
                 self._jobs = []
         else:
             self.audiobooks_dir.mkdir(parents=True, exist_ok=True)
             self._jobs = []
+
+    def _alloc_seq(self) -> int:
+        """Return the next unique queue sequence number. Call under self._lock."""
+        seq = self._next_seq
+        self._next_seq += 1
+        return seq
 
     def _save_locked(self):
         """Write queue file; must be called while holding self._lock."""
@@ -93,6 +141,7 @@ class QueueManager:
         token_target: int = 250,
         extra_opts: dict | None = None,
         direct_narration: bool = False,
+        priority: int = DEFAULT_PRIORITY,
     ) -> dict:
         dir_name = normalize_isbn(isbn)
         job: dict = {
@@ -107,6 +156,7 @@ class QueueManager:
             "token_target": token_target,
             "extra_opts": extra_opts or {},
             "direct_narration": direct_narration,
+            "priority": priority,
             "status": QUEUED,
             "stage": None,
             "created_at": _now(),
@@ -120,16 +170,42 @@ class QueueManager:
             "epub_path": None,
         }
         with self._lock:
+            job["queue_seq"] = self._alloc_seq()
             self._jobs.append(job)
             self._save_locked()
         return job
 
     def get_next_queued(self) -> Optional[dict]:
         with self._lock:
+            queued = [j for j in self._jobs if j["status"] == QUEUED]
+            if not queued:
+                return None
+            # Sort by ascending priority tier, then ascending queue_seq (FIFO).
+            # Tier 1 (podcast) → tier 2 (interrupted) → tier 3 (normal).
+            queued.sort(key=lambda j: (j.get("priority", DEFAULT_PRIORITY), j.get("queue_seq", 0)))
+            return dict(queued[0])
+
+    def enqueue_podcast_episode(self, episode: dict) -> dict:
+        """Insert a pre-built podcast episode job dict into the queue."""
+        with self._lock:
+            episode["queue_seq"] = self._alloc_seq()
+            self._jobs.append(episode)
+            self._save_locked()
+        return episode
+
+    def requeue_interrupted(self, job_id: str, start_stage: str, priority: int) -> None:
+        """Reset a running job back to QUEUED with the given priority."""
+        with self._lock:
             for job in self._jobs:
-                if job["status"] == QUEUED:
-                    return dict(job)
-        return None
+                if job["id"] == job_id:
+                    job["status"] = QUEUED
+                    job["start_stage"] = start_stage
+                    job["priority"] = priority
+                    job["started_at"] = None
+                    job["stage"] = None
+                    job["error"] = None
+                    self._save_locked()
+                    return
 
     def update(self, job_id: str, **kwargs) -> None:
         with self._lock:
@@ -182,6 +258,7 @@ class QueueManager:
         cfg_rate: float = 0.7,
         token_target: int = 250,
         direct_narration: bool = False,
+        priority: int = DEFAULT_PRIORITY,
     ) -> dict:
         """Queue a job that resumes from an existing directory at start_stage."""
         job: dict = {
@@ -196,6 +273,7 @@ class QueueManager:
             "token_target": token_target,
             "extra_opts": {},
             "direct_narration": direct_narration,
+            "priority": priority,
             "status": QUEUED,
             "stage": None,
             "start_stage": start_stage,  # worker skips earlier stages
@@ -210,9 +288,52 @@ class QueueManager:
             "epub_path": None,
         }
         with self._lock:
+            job["queue_seq"] = self._alloc_seq()
             self._jobs.append(job)
             self._save_locked()
         return job
+
+    def _queued_sorted(self) -> list[dict]:
+        """Return queued jobs in execution order. Must be called under self._lock."""
+        queued = [j for j in self._jobs if j["status"] == QUEUED]
+        queued.sort(key=lambda j: (j.get("priority", DEFAULT_PRIORITY), j.get("queue_seq", 0)))
+        return queued
+
+    def move_up(self, job_id: str) -> bool:
+        """Move a queued job one position earlier in the execution order.
+
+        Swaps the sort keys (priority + queue_seq) with the preceding queued
+        job.  Returns True if the swap was made, False if the job was not found
+        or is already first.
+        """
+        with self._lock:
+            ordered = self._queued_sorted()
+            idx = next((i for i, j in enumerate(ordered) if j["id"] == job_id), None)
+            if idx is None or idx == 0:
+                return False
+            a, b = ordered[idx - 1], ordered[idx]
+            a["priority"], b["priority"] = b["priority"], a["priority"]
+            a["queue_seq"], b["queue_seq"] = b["queue_seq"], a["queue_seq"]
+            self._save_locked()
+            return True
+
+    def move_down(self, job_id: str) -> bool:
+        """Move a queued job one position later in the execution order.
+
+        Swaps the sort keys (priority + queue_seq) with the following queued
+        job.  Returns True if the swap was made, False if the job was not found
+        or is already last.
+        """
+        with self._lock:
+            ordered = self._queued_sorted()
+            idx = next((i for i, j in enumerate(ordered) if j["id"] == job_id), None)
+            if idx is None or idx >= len(ordered) - 1:
+                return False
+            a, b = ordered[idx], ordered[idx + 1]
+            a["priority"], b["priority"] = b["priority"], a["priority"]
+            a["queue_seq"], b["queue_seq"] = b["queue_seq"], a["queue_seq"]
+            self._save_locked()
+            return True
 
     def scan_dirs(self) -> list[dict]:
         """Scan audiobooks_dir for subdirs not already in the queue.
@@ -224,7 +345,11 @@ class QueueManager:
         # Only dirs with an active (queued/running) job are excluded.
         # Interrupted and failed dirs should reappear so the user can resume them.
         with self._lock:
-            tracked = {j["dir_name"] for j in self._jobs if j["status"] in (QUEUED, RUNNING)}
+            tracked = {
+                j["dir_name"]
+                for j in self._jobs
+                if j["status"] in (QUEUED, RUNNING) and j.get("dir_name")
+            }
 
         results = []
         for subdir in sorted(self.audiobooks_dir.iterdir()):

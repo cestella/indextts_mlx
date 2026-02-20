@@ -194,6 +194,251 @@ class TestQueueManager:
         assert "jobs" in data
         assert len(data["jobs"]) == 1
 
+    # ── priority queue ────────────────────────────────────────────────────────
+
+    def test_normal_job_gets_priority_normal(self, queue):
+        from indextts_mlx.web.queue_manager import DEFAULT_PRIORITY
+
+        job = queue.submit(isbn="aaa", epub_url="https://x.com/a.epub", voice=None)
+        assert job["priority"] == DEFAULT_PRIORITY
+
+    def test_podcast_job_runs_before_normal(self, queue):
+        from indextts_mlx.web.queue_manager import URGENT_PRIORITY
+
+        queue.submit(isbn="n1", epub_url="https://x.com/n1.epub", voice=None)
+        queue.submit(isbn="n2", epub_url="https://x.com/n2.epub", voice=None)
+        podcast = {
+            "id": "pod-1",
+            "job_type": "podcast_episode",
+            "isbn": "Podcast: daily",
+            "priority": URGENT_PRIORITY,
+            "status": "queued",
+            "created_at": "2099-01-01T00:00:00Z",  # latest timestamp — must still win
+            "stage": None,
+        }
+        queue.enqueue_podcast_episode(podcast)
+        nxt = queue.get_next_queued()
+        assert nxt["id"] == "pod-1"
+
+    def test_interrupted_job_runs_before_normal_after_podcast(self, queue):
+        from indextts_mlx.web.queue_manager import DEFAULT_PRIORITY, RUNNING
+
+        interrupted_priority = DEFAULT_PRIORITY - 1  # worker computes max(1, priority-1)
+        normal = queue.submit(isbn="n1", epub_url="https://x.com/n.epub", voice=None)
+        queue.update(normal["id"], status=RUNNING)
+
+        # Simulate interrupt requeue (worker would pass max(1, original_priority - 1))
+        queue.requeue_interrupted(normal["id"], start_stage="synthesizing",
+                                  priority=interrupted_priority)
+        requeued = queue.get_job(normal["id"])
+        assert requeued["priority"] == interrupted_priority
+        assert requeued["status"] == "queued"
+
+        # Add a second normal job — interrupted must come before it
+        queue.submit(isbn="n2", epub_url="https://x.com/n2.epub", voice=None)
+        nxt = queue.get_next_queued()
+        assert nxt["id"] == normal["id"]
+
+    def test_priority_order_podcast_interrupted_normal(self, queue):
+        from indextts_mlx.web.queue_manager import DEFAULT_PRIORITY, RUNNING, URGENT_PRIORITY
+
+        n1 = queue.submit(isbn="n1", epub_url="https://x.com/n1.epub", voice=None)
+        queue.update(n1["id"], status=RUNNING)
+        queue.requeue_interrupted(n1["id"], start_stage="synthesizing",
+                                  priority=DEFAULT_PRIORITY - 1)
+
+        n2 = queue.submit(isbn="n2", epub_url="https://x.com/n2.epub", voice=None)
+
+        podcast = {
+            "id": "pod-1",
+            "job_type": "podcast_episode",
+            "isbn": "Podcast: daily",
+            "priority": URGENT_PRIORITY,
+            "status": "queued",
+            "created_at": "2099-01-01T00:00:00Z",
+            "stage": None,
+        }
+        queue.enqueue_podcast_episode(podcast)
+
+        order = []
+        for _ in range(3):
+            nxt = queue.get_next_queued()
+            order.append(nxt["id"])
+            queue.update(nxt["id"], status=RUNNING)
+            queue.update(nxt["id"], status="done")
+
+        assert order == ["pod-1", n1["id"], n2["id"]]
+
+    def test_normal_jobs_fifo_within_tier(self, queue):
+        j1 = queue.submit(isbn="f1", epub_url="https://x.com/f1.epub", voice=None)
+        j2 = queue.submit(isbn="f2", epub_url="https://x.com/f2.epub", voice=None)
+        j3 = queue.submit(isbn="f3", epub_url="https://x.com/f3.epub", voice=None)
+
+        order = []
+        for _ in range(3):
+            nxt = queue.get_next_queued()
+            order.append(nxt["id"])
+            queue.update(nxt["id"], status="done")
+
+        assert order == [j1["id"], j2["id"], j3["id"]]
+
+    def test_legacy_priority_migration_tier5(self, tmp_ab_dir):
+        """Old 'interrupted' value 5 (unambiguously legacy) is migrated to DEFAULT_PRIORITY-1."""
+        from indextts_mlx.web.queue_manager import DEFAULT_PRIORITY, QueueManager
+
+        interrupted_priority = DEFAULT_PRIORITY - 1
+        queue_file = tmp_ab_dir / ".queue.json"
+        queue_file.write_text(json.dumps({"jobs": [
+            {"id": "i1", "status": "queued", "priority": 5,
+             "created_at": "2024-01-01T00:00:00Z", "isbn": "int"},
+        ]}))
+        q = QueueManager(tmp_ab_dir)
+        assert q.get_job("i1")["priority"] == interrupted_priority
+
+    def test_current_priorities_not_remapped_on_reload(self, tmp_ab_dir):
+        """Values 0 (URGENT) and 10 (DEFAULT) are valid in the current scheme.
+
+        They must NOT be remapped when a queue file is reloaded — previously
+        the migration table contained 10→0 and 0→10, which silently corrupted
+        all audiobook jobs (priority 10) to urgent (0) after every restart,
+        breaking the podcast-interrupt logic.
+        """
+        from indextts_mlx.web.queue_manager import DEFAULT_PRIORITY, URGENT_PRIORITY, QueueManager
+
+        queue_file = tmp_ab_dir / ".queue.json"
+        queue_file.write_text(json.dumps({"jobs": [
+            {"id": "u1", "status": "queued", "priority": URGENT_PRIORITY,
+             "created_at": "2024-01-01T00:00:00Z", "isbn": "urg"},
+            {"id": "d1", "status": "queued", "priority": DEFAULT_PRIORITY,
+             "created_at": "2024-01-01T00:00:01Z", "isbn": "def"},
+        ]}))
+        q = QueueManager(tmp_ab_dir)
+        assert q.get_job("u1")["priority"] == URGENT_PRIORITY,  \
+            "URGENT_PRIORITY (0) must not be remapped to DEFAULT_PRIORITY (10)"
+        assert q.get_job("d1")["priority"] == DEFAULT_PRIORITY, \
+            "DEFAULT_PRIORITY (10) must not be remapped to URGENT_PRIORITY (0)"
+
+    def test_legacy_tier_migration(self, tmp_ab_dir):
+        """Previous-scheme values 1/2/3 are migrated to 0/9/10."""
+        from indextts_mlx.web.queue_manager import DEFAULT_PRIORITY, URGENT_PRIORITY, QueueManager
+
+        interrupted_priority = DEFAULT_PRIORITY - 1
+
+        queue_file = tmp_ab_dir / ".queue.json"
+        # Previous ascending tier scheme: 1=podcast, 2=interrupted, 3=normal
+        queue_file.write_text(json.dumps({"jobs": [
+            {"id": "p1", "status": "queued", "priority": 1,
+             "created_at": "2024-01-01T00:00:00Z", "isbn": "pod"},
+            {"id": "i1", "status": "queued", "priority": 2,
+             "created_at": "2024-01-01T00:00:01Z", "isbn": "int"},
+            {"id": "n1", "status": "queued", "priority": 3,
+             "created_at": "2024-01-01T00:00:02Z", "isbn": "nor"},
+        ]}))
+        q = QueueManager(tmp_ab_dir)
+        jobs = {j["id"]: j for j in q.all_jobs()}
+        assert jobs["p1"]["priority"] == URGENT_PRIORITY
+        assert jobs["i1"]["priority"] == interrupted_priority
+        assert jobs["n1"]["priority"] == DEFAULT_PRIORITY
+
+    def test_legacy_no_priority_field_becomes_normal(self, tmp_ab_dir):
+        from indextts_mlx.web.queue_manager import DEFAULT_PRIORITY, QueueManager
+
+        queue_file = tmp_ab_dir / ".queue.json"
+        queue_file.write_text(json.dumps({"jobs": [
+            {"id": "x1", "status": "queued",
+             "created_at": "2024-01-01T00:00:00Z", "isbn": "nopri"},
+        ]}))
+        q = QueueManager(tmp_ab_dir)
+        job = q.get_job("x1")
+        assert job["priority"] == DEFAULT_PRIORITY
+
+    # ── move_up / move_down ───────────────────────────────────────────────────
+
+    def test_move_up_swaps_with_predecessor(self, queue):
+        j1 = queue.submit(isbn="m1", epub_url="https://x.com/m1.epub", voice=None)
+        j2 = queue.submit(isbn="m2", epub_url="https://x.com/m2.epub", voice=None)
+        j3 = queue.submit(isbn="m3", epub_url="https://x.com/m3.epub", voice=None)
+
+        moved = queue.move_up(j3["id"])
+        assert moved is True
+        nxt_ids = [queue.get_next_queued()["id"]]
+        queue.update(nxt_ids[-1], status="done")
+        nxt_ids.append(queue.get_next_queued()["id"])
+        queue.update(nxt_ids[-1], status="done")
+        nxt_ids.append(queue.get_next_queued()["id"])
+
+        assert nxt_ids == [j1["id"], j3["id"], j2["id"]]
+
+    def test_move_down_swaps_with_successor(self, queue):
+        j1 = queue.submit(isbn="d1", epub_url="https://x.com/d1.epub", voice=None)
+        j2 = queue.submit(isbn="d2", epub_url="https://x.com/d2.epub", voice=None)
+        j3 = queue.submit(isbn="d3", epub_url="https://x.com/d3.epub", voice=None)
+
+        moved = queue.move_down(j1["id"])
+        assert moved is True
+        nxt_ids = []
+        for _ in range(3):
+            nxt = queue.get_next_queued()
+            nxt_ids.append(nxt["id"])
+            queue.update(nxt["id"], status="done")
+
+        assert nxt_ids == [j2["id"], j1["id"], j3["id"]]
+
+    def test_move_up_first_job_returns_false(self, queue):
+        j1 = queue.submit(isbn="u1", epub_url="https://x.com/u1.epub", voice=None)
+        assert queue.move_up(j1["id"]) is False
+
+    def test_move_down_last_job_returns_false(self, queue):
+        j1 = queue.submit(isbn="ld1", epub_url="https://x.com/ld1.epub", voice=None)
+        assert queue.move_down(j1["id"]) is False
+
+    def test_move_nonexistent_returns_false(self, queue):
+        assert queue.move_up("no-such-id") is False
+        assert queue.move_down("no-such-id") is False
+
+    def test_move_up_across_priority_tiers(self, queue):
+        """Moving a normal job up past an interrupted job promotes it in ordering."""
+        from indextts_mlx.web.queue_manager import DEFAULT_PRIORITY, RUNNING
+
+        n1 = queue.submit(isbn="t1", epub_url="https://x.com/t1.epub", voice=None)
+        queue.update(n1["id"], status=RUNNING)
+        queue.requeue_interrupted(n1["id"], start_stage="synthesizing",
+                                  priority=DEFAULT_PRIORITY - 1)
+
+        n2 = queue.submit(isbn="t2", epub_url="https://x.com/t2.epub", voice=None)
+
+        # Order currently: interrupted(n1) → normal(n2)
+        # Move n2 up → n2 should now come before n1
+        moved = queue.move_up(n2["id"])
+        assert moved is True
+        assert queue.get_next_queued()["id"] == n2["id"]
+
+    def test_api_move_up(self, client, queue):
+        j1 = queue.submit(isbn="au1", epub_url="https://x.com/au1.epub", voice=None)
+        j2 = queue.submit(isbn="au2", epub_url="https://x.com/au2.epub", voice=None)
+        r = client.post(f"/api/queue/move/{j2['id']}/up")
+        assert r.status_code == 200
+        assert r.get_json()["ok"] is True
+        assert queue.get_next_queued()["id"] == j2["id"]
+
+    def test_api_move_down(self, client, queue):
+        j1 = queue.submit(isbn="ad1", epub_url="https://x.com/ad1.epub", voice=None)
+        j2 = queue.submit(isbn="ad2", epub_url="https://x.com/ad2.epub", voice=None)
+        r = client.post(f"/api/queue/move/{j1['id']}/down")
+        assert r.status_code == 200
+        assert r.get_json()["ok"] is True
+        assert queue.get_next_queued()["id"] == j2["id"]
+
+    def test_api_move_up_first_returns_400(self, client, queue):
+        j1 = queue.submit(isbn="af1", epub_url="https://x.com/af1.epub", voice=None)
+        r = client.post(f"/api/queue/move/{j1['id']}/up")
+        assert r.status_code == 400
+
+    def test_api_move_down_last_returns_400(self, client, queue):
+        j1 = queue.submit(isbn="al1", epub_url="https://x.com/al1.epub", voice=None)
+        r = client.post(f"/api/queue/move/{j1['id']}/down")
+        assert r.status_code == 400
+
 
 # ── Flask API routes ──────────────────────────────────────────────────────────
 

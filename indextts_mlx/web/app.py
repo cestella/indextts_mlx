@@ -23,8 +23,13 @@ def create_app(
     worker: "Worker",
     public_url: str | None = None,
     dev: bool = False,
+    podcast_dirs: list | None = None,
 ) -> Flask:
     audiobooks_dir = Path(audiobooks_dir)
+    podcast_dirs = [Path(d) for d in (podcast_dirs or [])]
+    # Map podcast_name → podcast_dir for fast lookups
+    _podcast_map: dict[str, Path] = {d.name: d for d in podcast_dirs}
+
     template_dir = Path(__file__).parent / "templates"
     app = Flask(__name__, template_folder=str(template_dir))
     app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024  # 1 MB max request
@@ -34,11 +39,19 @@ def create_app(
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
+    def _status_dir(job: dict) -> Path | None:
+        if job.get("job_type") == "podcast_episode" and job.get("podcast_dir"):
+            return Path(job["podcast_dir"]) / ".status"
+        if job.get("dir_name"):
+            return audiobooks_dir / job["dir_name"] / ".status"
+        return None
+
     def _synth_status(job: dict) -> dict | None:
         """Read synth_status.json for a running/done job if it exists."""
-        if not job.get("dir_name"):
+        sd = _status_dir(job)
+        if not sd:
             return None
-        status_file = audiobooks_dir / job["dir_name"] / ".status" / "synth_status.json"
+        status_file = sd / "synth_status.json"
         if status_file.exists():
             try:
                 return json.loads(status_file.read_text())
@@ -48,9 +61,10 @@ def create_app(
 
     def _classify_status(job: dict) -> dict | None:
         """Read classify_status.json for a directing job if it exists."""
-        if not job.get("dir_name"):
+        sd = _status_dir(job)
+        if not sd:
             return None
-        status_file = audiobooks_dir / job["dir_name"] / ".status" / "classify_status.json"
+        status_file = sd / "classify_status.json"
         if status_file.exists():
             try:
                 return json.loads(status_file.read_text())
@@ -117,6 +131,7 @@ def create_app(
             cfg_rate=float(data.get("cfg_rate", 0.7)),
             token_target=int(data.get("token_target", 50)),
             direct_narration=bool(data.get("direct_narration", False)),
+            priority=int(data.get("priority", 10)),
         )
         return jsonify({"job": job}), 201
 
@@ -183,8 +198,23 @@ def create_app(
             cfg_rate=float(data.get("cfg_rate", 0.7)),
             token_target=int(data.get("token_target", 50)),
             direct_narration=bool(data.get("direct_narration", False)),
+            priority=int(data.get("priority", 10)),
         )
         return jsonify({"job": job}), 201
+
+    @app.route("/api/queue/move/<job_id>/up", methods=["POST"])
+    def api_move_up(job_id):
+        moved = queue.move_up(job_id)
+        if not moved:
+            return jsonify({"ok": False, "reason": "not found or already first"}), 400
+        return jsonify({"ok": True})
+
+    @app.route("/api/queue/move/<job_id>/down", methods=["POST"])
+    def api_move_down(job_id):
+        moved = queue.move_down(job_id)
+        if not moved:
+            return jsonify({"ok": False, "reason": "not found or already last"}), 400
+        return jsonify({"ok": True})
 
     @app.route("/api/cancel/<job_id>", methods=["POST"])
     def api_cancel(job_id):
@@ -197,6 +227,32 @@ def create_app(
         # If job was running, also kill the subprocess
         worker.request_cancel(job_id)
         return jsonify({"ok": True, "prev_status": prev_status})
+
+    # ── podcast routes ────────────────────────────────────────────────────────
+
+    @app.route("/podcasts/<podcast_name>/feed")
+    def podcast_rss(podcast_name):
+        podcast_dir = _podcast_map.get(podcast_name)
+        if podcast_dir is None:
+            abort(404)
+        from indextts_mlx.web.podcast import PodcastConfig, generate_rss
+
+        config = PodcastConfig.from_file(podcast_dir / "config.json")
+        base = public_url or request.url_root.rstrip("/")
+        xml = generate_rss(podcast_dir, config, base)
+        return app.response_class(xml, mimetype="application/rss+xml; charset=utf-8")
+
+    @app.route("/podcasts/<podcast_name>/audio/<path:filename>")
+    def podcast_audio(podcast_name, filename):
+        from flask import send_from_directory
+
+        podcast_dir = _podcast_map.get(podcast_name)
+        if podcast_dir is None:
+            abort(404)
+        chapters_mp3 = podcast_dir / "chapters_mp3"
+        if not chapters_mp3.is_dir():
+            abort(404)
+        return send_from_directory(str(chapters_mp3), filename)
 
     @app.route("/files/")
     @app.route("/files/<path:rel_path>")
@@ -232,5 +288,19 @@ def create_app(
             return send_file(str(target), mimetype=mime or "application/octet-stream")
 
         abort(404)
+
+    # ── podcast watcher ───────────────────────────────────────────────────────
+
+    if podcast_dirs:
+        from indextts_mlx.web.podcast import PodcastWatcher
+
+        watcher = PodcastWatcher(
+            podcast_dirs=podcast_dirs,
+            queue=queue,
+            worker=worker,
+            server_voices_dir=voices_dir,
+            public_url=public_url,
+        )
+        watcher.start()
 
     return app

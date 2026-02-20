@@ -5,23 +5,33 @@ IndexTTS-2 text-to-speech inference on Apple Silicon via [MLX](https://github.co
 ## Requirements
 
 - Apple Silicon Mac (M1/M2/M3/M4)
-- Python 3.11 or 3.12 recommended (required for NeMo/spaCy compatibility; 3.10+ for core synthesis only)
+- Python 3.10, 3.11, 3.12, or 3.13 (Python 3.14+ not yet supported due to spaCy compatibility)
 - IndexTTS-2 model weights converted to `.npz` format (see [Weights](#weights))
 
 ## Installation
 
+This project uses [UV](https://github.com/astral-sh/uv), a fast Python package manager that provides deterministic installs.
+
 ```bash
 git clone https://github.com/cestella/indextts_mlx
 cd indextts_mlx
-python3.11 -m venv venv          # use 3.11 or 3.12 for full feature support
-source venv/bin/activate
-pip install -e .
+
+# Install UV if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# or: brew install uv
+
+# Create venv and install dependencies (uses Python 3.11 or 3.12)
+uv sync
+
+# For development (includes pytest + black):
+uv sync --extra dev
 ```
 
-For development (includes pytest + black):
+After installation, run commands with `uv run`:
 
 ```bash
-pip install -e ".[dev]"
+uv run indextts --help
+uv run pytest
 ```
 
 ## Weights
@@ -33,20 +43,20 @@ pip install -e ".[dev]"
 **Install conversion dependencies first:**
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install huggingface_hub safetensors
+uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+uv sync --extra convert
 ```
 
 **Run the downloader:**
 
 ```bash
-indextts download-weights --out-dir ~/indextts_weights
+uv run indextts download-weights --out-dir ~/indextts_weights
 ```
 
 Or with a separate download cache (useful for re-running without re-downloading):
 
 ```bash
-indextts download-weights --out-dir ~/indextts_weights --cache-dir ~/indextts_cache
+uv run indextts download-weights --out-dir ~/indextts_weights --cache-dir ~/indextts_cache
 ```
 
 Models downloaded and converted:
@@ -104,13 +114,13 @@ For `--emo-text`, the fine-tuned Qwen3-0.6B emotion classifier must be present. 
 `synthesize_long()` and `indextts extract` use spaCy for sentence boundary detection. Install spaCy and the appropriate language model:
 
 ```bash
-pip install -e ".[long]"                          # installs spacy + pysbd
-python -m spacy download en_core_web_sm           # English
-python -m spacy download fr_core_news_sm          # French
-python -m spacy download es_core_news_sm          # Spanish
-python -m spacy download it_core_news_sm          # Italian
-python -m spacy download de_core_news_sm          # German
-python -m spacy download pt_core_news_sm          # Portuguese
+uv sync --extra long
+
+# Install spaCy language models (examples for common languages):
+uv pip install en-core-web-sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl  # English
+uv pip install fr-core-news-sm@https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl  # French
+uv pip install es-core-news-sm@https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.8.0/es_core_news_sm-3.8.0-py3-none-any.whl  # Spanish
+uv pip install de-core-news-sm@https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl  # German
 ```
 
 ### Text normalization
@@ -120,7 +130,7 @@ python -m spacy download pt_core_news_sm          # Portuguese
 **Linux:** prebuilt wheels are available:
 
 ```bash
-pip install pynini nemo_text_processing
+uv pip install pynini nemo_text_processing
 ```
 
 **macOS:** `pynini` must be compiled against OpenFst. Requires Python 3.11 or 3.12.
@@ -135,20 +145,20 @@ pip install pynini nemo_text_processing
    export CFLAGS="-I/opt/homebrew/opt/openfst/include"
    export CXXFLAGS="-I/opt/homebrew/opt/openfst/include"
    export LDFLAGS="-L/opt/homebrew/opt/openfst/lib"
-   pip install --no-cache-dir pynini
+   uv pip install --no-cache-dir pynini
    ```
 
    > **Note:** `nemo_text_processing` pins `pynini==2.1.6.post1`, which does not build against OpenFst 1.8+. Install without a version pin and ignore the warning — it works at runtime.
 
 3. **Install nemo_text_processing:**
    ```bash
-   pip install --no-deps nemo_text_processing
-   pip install sacremoses cdifflib editdistance inflect joblib pandas regex transformers wget
+   uv pip install --no-deps nemo_text_processing
+   uv pip install sacremoses cdifflib editdistance inflect joblib pandas regex transformers wget
    ```
 
 4. **Verify:**
    ```bash
-   python -c "from nemo_text_processing.text_normalization.normalize import Normalizer; print('ok')"
+   uv run python -c "from nemo_text_processing.text_normalization.normalize import Normalizer; print('ok')"
    ```
 
 ### M4B audiobook packaging

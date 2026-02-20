@@ -1,0 +1,14 @@
+jobs:
+  - name: news_podcast
+    schedule: "0 4 * * *"
+    command: /Users/cstella/code/news_tracker/run_news.sh
+    args:
+      - /Users/cstella/audiobooks/podcasts/
+    log_dir: /Users/cstella/code/news_tracker/logs
+
+  - name: podcast_summary
+    schedule: "0 0 * * *"
+    command: /Users/cstella/code/news_tracker/run_opeds.sh
+    args:
+      - /Users/cstella/audiobooks/podcasts/
+    log_dir: /Users/cstella/code/news_tracker/logs

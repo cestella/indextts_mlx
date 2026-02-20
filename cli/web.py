@@ -55,7 +55,28 @@ import click
     default=False,
     help="Disable template caching so HTML changes are picked up on page refresh.",
 )
-def web(port, audiobooks_dir, voices_dir, default_voice, host, public_url, dev):
+@click.option(
+    "--podcast-dir",
+    "podcast_dirs",
+    multiple=True,
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    help=(
+        "Directory to watch for podcast episodes.  Each directory must contain a "
+        "chapters_txt/ subdirectory and optionally a config.json.  "
+        "May be specified multiple times for multiple podcasts."
+    ),
+)
+@click.option(
+    "--scheduler-config",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help=(
+        "Path to a YAML file defining cron-scheduled shell commands.  "
+        "Each job specifies a name, cron schedule, command, optional args list, "
+        "and a log_dir where timestamped log files are written."
+    ),
+)
+def web(port, audiobooks_dir, voices_dir, default_voice, host, public_url, dev, podcast_dirs, scheduler_config):
     """Start the IndexTTS audiobook builder web interface.
 
     The server accepts EPUB URLs and ISBNs, queues download + extraction +
@@ -85,6 +106,9 @@ def web(port, audiobooks_dir, voices_dir, default_voice, host, public_url, dev):
         click.echo(f"Voices directory:     {voices_dir}")
     if default_voice:
         click.echo(f"Default voice:        {default_voice}")
+    podcast_dir_paths = [Path(d).expanduser().resolve() for d in podcast_dirs]
+    for pd in podcast_dir_paths:
+        click.echo(f"Podcast directory:    {pd}")
 
     queue = QueueManager(ab_dir)
     worker = Worker(
@@ -102,7 +126,20 @@ def web(port, audiobooks_dir, voices_dir, default_voice, host, public_url, dev):
         worker=worker,
         public_url=public_url.rstrip("/") if public_url else None,
         dev=dev,
+        podcast_dirs=podcast_dir_paths or None,
     )
+
+    # ── Scheduler ─────────────────────────────────────────────────────────────
+    _scheduler = None
+    if scheduler_config:
+        from indextts_mlx.web.scheduler import load_scheduler_config, start_scheduler
+
+        sched_jobs = load_scheduler_config(scheduler_config)
+        if sched_jobs:
+            _scheduler = start_scheduler(sched_jobs, worker=worker)
+            click.echo(f"Scheduler:            {len(sched_jobs)} job(s) from {scheduler_config}")
+        else:
+            click.echo("Scheduler:            config loaded but no jobs defined")
 
     click.echo(f"\nIndexTTS web UI running at http://{host}:{port}/")
     click.echo("Press Ctrl+C to stop.\n")
@@ -111,6 +148,8 @@ def web(port, audiobooks_dir, voices_dir, default_voice, host, public_url, dev):
         app.run(host=host, port=port, debug=False, use_reloader=False)
     finally:
         worker.stop()
+        if _scheduler is not None:
+            _scheduler.shutdown(wait=False)
 
 
 if __name__ == "__main__":

@@ -183,6 +183,8 @@ def render_segments_jsonl(
     enable_drift: bool = False,
     # Optional audio file appended after the last segment (e.g. a chapter-end chime)
     end_chime: Optional[Union[str, Path]] = None,
+    # Optional callback invoked before each chunk: fn(chunk_index, total_chunks, chunk_text)
+    on_chunk: Optional[callable] = None,
     # Optional callback invoked after each chunk: fn(chunk_index, total_chunks, stats)
     on_chunk_done: Optional[callable] = None,
     verbose: bool = True,
@@ -420,6 +422,8 @@ def render_segments_jsonl(
                 if verbose:
                     preview = chunk_text[:50] + ("..." if len(chunk_text) > 50 else "")
                     print(f"    chunk {i+1}/{total}: {preview!r}")
+                if on_chunk is not None:
+                    on_chunk(i, total, chunk_text)
 
             def _on_chunk_done(i, total, stats):
                 if verbose:

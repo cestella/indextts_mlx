@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .queue_manager import QueueManager
 
-from .queue_manager import CANCELLED, DONE, FAILED, RUNNING, _now
+from .queue_manager import CANCELLED, DONE, FAILED, QUEUED, RUNNING, _now, _detect_stage
 
 
 def _indextts_cmd() -> str:
@@ -44,6 +44,9 @@ class Worker(threading.Thread):
         self._current_proc: subprocess.Popen | None = None
         self._proc_lock = threading.Lock()
         self._current_job_id: str | None = None
+        # Gate used by the scheduler: cleared = paused, set = allowed to pick jobs.
+        self._scheduler_gate = threading.Event()
+        self._scheduler_gate.set()
 
     def stop(self):
         self._stop_event.set()
@@ -67,9 +70,100 @@ class Worker(threading.Thread):
             return True
         return False
 
+    def interrupt_current_for_priority_job(self, job: dict) -> None:
+        """Terminate the current job and requeue it at priority - 1.
+
+        Called when a priority-0 job arrives and the running job is not priority 0.
+        The interrupted job is requeued (not cancelled) at one step higher priority
+        than before so it naturally runs next after the urgent job finishes.
+        Priority is floored at 1 so interrupted jobs never accidentally become
+        priority-0 (which would give them the same non-interruptible status).
+        """
+        job_id = job.get("id")
+        if not job_id:
+            return
+        if self._current_job_id != job_id:
+            return
+
+        # Detect how far the job got so it can resume from the right stage
+        job_dir = self.audiobooks_dir / (job.get("dir_name") or "")
+        start_stage, _ = _detect_stage(job_dir)
+        if start_stage is None:
+            start_stage = job.get("start_stage") or "directing"
+
+        new_priority = max(1, job.get("priority", 10) - 1)
+
+        # Requeue BEFORE signalling cancellation so the worker thread always
+        # sees QUEUED status when it checks after the cancel event fires.
+        # If we set the cancel event first, the worker can race ahead, read
+        # RUNNING status, and write CANCELLED before we get a chance to requeue.
+        self.queue.requeue_interrupted(job_id, start_stage, priority=new_priority)
+
+        # Signal cancellation and kill the subprocess (same as cancel_current)
+        self._cancel_event.set()
+        with self._proc_lock:
+            if self._current_proc and self._current_proc.poll() is None:
+                try:
+                    self._current_proc.terminate()
+                    time.sleep(0.5)
+                    if self._current_proc.poll() is None:
+                        self._current_proc.kill()
+                except Exception:
+                    pass
+
+    def pause_for_scheduler(self) -> None:
+        """Block the worker from starting new jobs and interrupt any running one.
+
+        Called by the scheduler just before running an expensive script.
+        The interrupted job is requeued at max(0, priority - 1) so it runs
+        immediately after the script finishes.  Priority 0 jobs stay at 0
+        (they're already at the top); all others move one step closer to the top.
+        """
+        # Close the gate first so the worker won't pick up a new job between
+        # the interrupt and the script actually starting.
+        self._scheduler_gate.clear()
+
+        active = self.queue.active_job()
+        if not active:
+            return
+        job_id = active.get("id")
+        if self._current_job_id != job_id:
+            return
+
+        # Detect how far the job got for correct resume stage.
+        if active.get("job_type") == "podcast_episode":
+            job_dir = Path(active.get("podcast_dir") or "")
+        else:
+            job_dir = self.audiobooks_dir / (active.get("dir_name") or "")
+        start_stage, _ = _detect_stage(job_dir)
+        if start_stage is None:
+            start_stage = active.get("start_stage") or active.get("stage") or "directing"
+
+        new_priority = max(0, active.get("priority", 10) - 1)
+        self.queue.requeue_interrupted(job_id, start_stage, priority=new_priority)
+
+        self._cancel_event.set()
+        with self._proc_lock:
+            if self._current_proc and self._current_proc.poll() is None:
+                try:
+                    self._current_proc.terminate()
+                    time.sleep(0.5)
+                    if self._current_proc.poll() is None:
+                        self._current_proc.kill()
+                except Exception:
+                    pass
+
+    def resume_for_scheduler(self) -> None:
+        """Allow the worker to pick up jobs again after a scheduler script finishes."""
+        self._scheduler_gate.set()
+
     def run(self):
         cmd = _indextts_cmd()
         while not self._stop_event.is_set():
+            # Block here while the scheduler has paused us.
+            if not self._scheduler_gate.wait(timeout=2):
+                continue
+
             job = self.queue.get_next_queued()
             if job is None:
                 time.sleep(2)
@@ -80,7 +174,10 @@ class Worker(threading.Thread):
             self.queue.update(job["id"], status=RUNNING, started_at=_now(), stage="starting")
 
             try:
-                self._run_job(cmd, job)
+                if job.get("job_type") == "podcast_episode":
+                    self._run_podcast_episode(cmd, job)
+                else:
+                    self._run_job(cmd, job)
             except Exception as exc:
                 self.queue.update(
                     job["id"],
@@ -278,6 +375,100 @@ class Worker(threading.Thread):
             m4b_path=m4b_rel,
         )
 
+    def _run_podcast_episode(self, cmd: str, job: dict):
+        """Run the directing + synthesizing stages for all pending episodes in a podcast dir."""
+        jid = job["id"]
+        podcast_dir = Path(job["podcast_dir"])
+
+        chapters_txt = podcast_dir / "chapters_txt"
+        chapters_directed = podcast_dir / "chapters_directed"
+        chapters_mp3 = podcast_dir / "chapters_mp3"
+        chapters_directed.mkdir(exist_ok=True)
+        chapters_mp3.mkdir(exist_ok=True)
+        status_dir = podcast_dir / ".status"
+        status_dir.mkdir(exist_ok=True)
+
+        direct_narration = job.get("direct_narration", True)
+
+        # ── 1. Directing (txt dir → jsonl dir) ── skipped when direct_narration=False
+        txts = {p.stem for p in chapters_txt.glob("*.txt")} if chapters_txt.is_dir() else set()
+
+        if direct_narration:
+            # Remove stale JSONL files (no corresponding txt) so they don't pollute
+            # the synthesize step or confuse the "already directed" check.
+            for jsonl_file in list(chapters_directed.glob("*.jsonl")):
+                if jsonl_file.stem not in txts:
+                    jsonl_file.unlink(missing_ok=True)
+
+            jsonls = {p.stem for p in chapters_directed.glob("*.jsonl")}
+            if txts - jsonls:
+                if self._is_cancelled(jid):
+                    return
+                stale = status_dir / "classify_status.json"
+                stale.unlink(missing_ok=True)
+                self.queue.update(jid, stage="directing")
+                self._run_proc(
+                    jid,
+                    [
+                        cmd, "classify-emotions",
+                        str(chapters_txt), str(chapters_directed),
+                        "--status", str(status_dir),
+                    ],
+                    stage="directing",
+                )
+
+        # ── 2. Synthesizing ───────────────────────────────────────────────────
+        mp3s = {p.stem for p in chapters_mp3.glob("*.mp3")}
+        if direct_narration:
+            # Synth from directed jsonls — only those with a corresponding txt.
+            jsonls = {p.stem for p in chapters_directed.glob("*.jsonl")} & txts
+            pending_synth = jsonls - mp3s
+            synth_input_dir = str(chapters_directed)
+        else:
+            # Synth directly from txt files.
+            pending_synth = txts - mp3s
+            synth_input_dir = str(chapters_txt)
+
+        if pending_synth:
+            if self._is_cancelled(jid):
+                return
+            stale = status_dir / "synth_status.json"
+            stale.unlink(missing_ok=True)
+            self.queue.update(jid, stage="synthesizing")
+            synth_cmd = [
+                cmd,
+                "synthesize",
+                "--file",
+                synth_input_dir,
+                "--out",
+                str(chapters_mp3),
+                "--out-ext",
+                "mp3",
+                "--status",
+                str(status_dir),
+                "--steps",
+                str(job["steps"]),
+                "--temperature",
+                str(job["temperature"]),
+                "--emotion",
+                str(job["emotion"]),
+                "--cfg-rate",
+                str(job["cfg_rate"]),
+                "--token-target",
+                str(job["token_target"]),
+            ]
+            voices_dir = job.get("voices_dir") or self.voices_dir
+            voice = job.get("voice") or self.default_voice
+            if voices_dir:
+                synth_cmd += ["--voices-dir", voices_dir]
+                if voice:
+                    synth_cmd += ["--voice", voice]
+            elif voice:
+                synth_cmd += ["--spk-audio-prompt", voice]
+            self._run_proc(jid, synth_cmd, stage="synthesizing")
+
+        self.queue.update(jid, status=DONE, stage=None, finished_at=_now())
+
     def _run_proc(self, job_id: str, args: list[str], stage: str):
         proc = subprocess.Popen(
             args,
@@ -305,7 +496,11 @@ class Worker(threading.Thread):
             self._current_proc = None
 
         if self._cancel_event.is_set():
-            self.queue.update(job_id, status=CANCELLED, finished_at=_now(), stage=None)
+            # Don't overwrite QUEUED status — interrupt_current_for_podcast may
+            # have already requeued this job; in that case just stop processing.
+            current = self.queue.get_job(job_id)
+            if not current or current["status"] != QUEUED:
+                self.queue.update(job_id, status=CANCELLED, finished_at=_now(), stage=None)
             return
 
         if proc.returncode != 0:
@@ -314,7 +509,9 @@ class Worker(threading.Thread):
 
     def _is_cancelled(self, job_id: str) -> bool:
         if self._cancel_event.is_set():
-            self.queue.update(job_id, status=CANCELLED, finished_at=_now(), stage=None)
+            current = self.queue.get_job(job_id)
+            if not current or current["status"] != QUEUED:
+                self.queue.update(job_id, status=CANCELLED, finished_at=_now(), stage=None)
             return True
         job = self.queue.get_job(job_id)
         if job and job["status"] == CANCELLED:
