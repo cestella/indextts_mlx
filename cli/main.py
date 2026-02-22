@@ -17,6 +17,7 @@ from cli.extract import extract
 from cli.m4b import m4b
 from cli.download_weights import download_weights
 from cli.web import web
+from cli.srv import srv
 
 
 @click.group()
@@ -30,6 +31,7 @@ main.add_command(extract)
 main.add_command(m4b)
 main.add_command(download_weights)
 main.add_command(web)
+main.add_command(srv)
 
 
 if __name__ == "__main__":

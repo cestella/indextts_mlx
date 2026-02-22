@@ -171,12 +171,26 @@ class EPUBParser:
         text = self.STRAY_BRACKETED_NOTE_RE.sub("", text)
         text = self.STRAY_NUMERIC_LINE_RE.sub("", text)
 
-        # Strip trailing spaces per line
+        # Strip trailing spaces per line and collapse consecutive empty lines
+        # into a single empty line (preserving paragraph boundaries from <p> tags).
         lines = [ln.strip() for ln in text.split("\n")]
-        lines = [ln for ln in lines if ln != ""]
+        collapsed: list[str] = []
+        for ln in lines:
+            if ln == "":
+                if collapsed and collapsed[-1] != "":
+                    collapsed.append("")
+            else:
+                collapsed.append(ln)
+        # Drop leading/trailing empty lines
+        while collapsed and collapsed[-1] == "":
+            collapsed.pop()
+        while collapsed and collapsed[0] == "":
+            collapsed.pop(0)
+        lines = collapsed
 
         # Drop lines that are only punctuation/whitespace (orphaned quote chars etc.)
-        lines = [ln for ln in lines if re.search(r"\w", ln)]
+        # but preserve empty lines (paragraph boundary markers).
+        lines = [ln for ln in lines if ln == "" or re.search(r"\w", ln)]
 
         # Re-join lines where the previous line ends with an open quote and the
         # next line starts with the quoted content (epub line-break inside a span).
@@ -243,7 +257,12 @@ class EPUBParser:
         self._strip_non_narration_elements(soup)
         self._strip_notes(soup)
 
-        # Use newline separator to keep paragraph-ish boundaries
+        # Insert an extra newline after block-level elements so that
+        # consecutive <p> tags produce \n\n (paragraph boundary) rather
+        # than a single \n when get_text("\n") joins all text nodes.
+        for tag in soup.find_all(["p", "blockquote"]):
+            tag.insert_after("\n")
+
         text = soup.get_text("\n")
 
         return self._normalize_text(text)

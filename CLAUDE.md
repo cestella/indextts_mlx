@@ -4,20 +4,18 @@
 
 This is a pure-MLX inference package for IndexTTS-2 TTS on Apple Silicon. It wraps six models in a single `IndexTTS2` class with a `synthesize()` method and a `indextts-tts` CLI entry point.
 
-**Two virtual environments:**
-
-| Venv | Purpose | Activate |
-|------|---------|---------|
-| `venv/` | Normal inference + tests (MLX only) | `source venv/bin/activate` |
-| `venv_parity/` | PyTorch parity comparison (has torch, transformers, torchaudio) | `source venv_parity/bin/activate` |
-
-Create them once:
+**ALWAYS use `uv` to run commands — never activate venvs or call python/pip directly.**
 
 ```bash
-# Inference venv (Python 3.14, MLX stack)
-python3 -m venv venv && venv/bin/pip install -e ".[dev]"
+uv sync                    # install/update deps
+uv run python ...          # run python
+uv run pytest ...          # run tests
+uv run indextts ...        # run CLI
+```
 
-# Parity venv (Python 3.11, PyTorch stack — used for compare_pytorch_mlx.py)
+The parity venv (`venv_parity/`) is the one exception — it uses a separate Python 3.11 + PyTorch stack for `compare_pytorch_mlx.py`:
+
+```bash
 python3.11 -m venv venv_parity && venv_parity/bin/pip install -e ".[parity]"
 ```
 
@@ -28,11 +26,11 @@ python3.11 -m venv venv_parity && venv_parity/bin/pip install -e ".[parity]"
 ### Tests
 
 ```bash
-pytest tests/ -v                         # all tests
-pytest tests/test_pipeline.py -v        # end-to-end only
-pytest tests/test_voices.py -v          # voice/emo logic only (no weights needed)
-pytest tests/ -v -k "not parity"        # skip torchaudio/transformers tests
-pytest tests/ -x                        # stop on first failure
+uv run pytest tests/ -v                         # all tests
+uv run pytest tests/test_pipeline.py -v        # end-to-end only
+uv run pytest tests/test_voices.py -v          # voice/emo logic only (no weights needed)
+uv run pytest tests/ -v -k "not parity"        # skip torchaudio/transformers tests
+uv run pytest tests/ -x                        # stop on first failure
 ```
 
 `tests/test_voices.py` is fast (no model loading). All other tests require weights + reference audio.
@@ -282,6 +280,14 @@ Pipeline:
 The autoregressive loop in `pipeline.py` runs up to `max_codes` steps (default 1500). The stop token is `gpt_model.stop_mel_token` (8193). A 200-character sentence typically produces ~545 codes before the stop token.
 
 The loop uses **top-k sampling** with `gpt_temperature=0.8, top_k=200` (matching original IndexTTS-2 defaults), not greedy argmax. Pure greedy decoding gets stuck in repetitive loops on many sentences, producing noise in the tail of the audio.
+
+---
+
+## Testing rules
+
+**NEVER skip tests gracefully.** If an integration test requires a dependency (mlx_whisper, torch, transformers, etc.), that dependency must be installed. Tests must fail loudly when something is wrong — never use `pytest.importorskip()` or conditional skips to hide missing dependencies. The point of integration tests is to test integrations; a skipped test tests nothing.
+
+**NEVER fall back gracefully when a dependency fails.** If code depends on a library, let it crash. Do not wrap imports in try/except to provide degraded functionality. The only acceptable fallback is to an equivalent alternative (e.g. trying a second ISBN source when the first fails). "Graceful degradation" that silently hides broken functionality is a bug, not a feature.
 
 ---
 

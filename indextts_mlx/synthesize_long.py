@@ -24,6 +24,7 @@ Example::
 
 from __future__ import annotations
 
+import re
 import time
 import warnings
 from dataclasses import dataclass, field
@@ -65,6 +66,7 @@ class LongSynthesisConfig:
     normalize: bool = True
     silence_between_chunks_ms: int = 300
     crossfade_ms: int = 10
+    paragraph_pause_ms: int = 1100
     segmenter_config: Optional[SegmenterConfig] = None
     normalizer_config: Optional[NormalizerConfig] = None
     verbose: bool = False
@@ -112,6 +114,7 @@ def synthesize_long(
     normalize: bool = True,
     silence_between_chunks_ms: int = 300,
     crossfade_ms: int = 10,
+    paragraph_pause_ms: int = 1100,
     max_chars: int = 300,
     verbose: bool = False,
     # Optional pre-built Normalizer to reuse (avoids re-initialising NeMo on every call)
@@ -158,6 +161,7 @@ def synthesize_long(
             normalize=normalize,
             silence_between_chunks_ms=silence_between_chunks_ms,
             crossfade_ms=crossfade_ms,
+            paragraph_pause_ms=paragraph_pause_ms,
             segmenter_config=SegmenterConfig(
                 language=language,
                 strategy="char_count",
@@ -166,22 +170,35 @@ def synthesize_long(
             verbose=verbose,
         )
 
+    # ── 0. Split on paragraph break markers (`...` on its own line) ─────────
+    paragraph_blocks = re.split(r"(?:^|\n)\.\.\.\s*(?:\n|$)", text)
+    paragraph_blocks = [b.strip() for b in paragraph_blocks if b.strip()]
+
     # ── 1. Normalize ─────────────────────────────────────────────────────────
     if config.normalize:
         if normalizer is None:
             normalizer = Normalizer(config.normalizer_config)
-        text = normalizer.normalize(text)
+        paragraph_blocks = [normalizer.normalize(b) for b in paragraph_blocks]
 
-    # ── 2. Segment ───────────────────────────────────────────────────────────
+    # ── 2. Segment each paragraph block ──────────────────────────────────────
     segmenter = Segmenter(config.segmenter_config)
-    chunks = segmenter.segment(text)
+    # Build a list of (chunk_text, is_paragraph_boundary_after) pairs
+    chunks: List[str] = []
+    paragraph_boundary_after: set[int] = set()
+    for block_idx, block in enumerate(paragraph_blocks):
+        block_chunks = segmenter.segment(block)
+        chunks.extend(block_chunks)
+        # Mark the last chunk of each block (except the final block) as a
+        # paragraph boundary so we insert a longer pause after it.
+        if block_idx < len(paragraph_blocks) - 1 and chunks:
+            paragraph_boundary_after.add(len(chunks) - 1)
 
     if not chunks:
         warnings.warn("synthesize_long: no text chunks produced — returning empty audio.")
         return np.zeros(0, dtype=np.float32)
 
     if config.verbose:
-        print(f"synthesize_long: {len(chunks)} chunk(s) from {len(text)} chars")
+        print(f"synthesize_long: {len(chunks)} chunk(s) from {len(paragraph_blocks)} paragraph(s)")
 
     # ── 3. Synthesize each chunk ──────────────────────────────────────────────
     silence_samples = int(OUTPUT_SAMPLE_RATE * config.silence_between_chunks_ms / 1000)
@@ -256,15 +273,36 @@ def synthesize_long(
     if len(audio_parts) == 1:
         return audio_parts[0]
 
+    paragraph_pause_samples = int(OUTPUT_SAMPLE_RATE * config.paragraph_pause_ms / 1000)
+    paragraph_silence = np.zeros(paragraph_pause_samples, dtype=np.float32)
+
     if crossfade_samples > 0:
-        return _crossfade_concat(audio_parts, crossfade_samples)
+        # Crossfade within paragraphs; use paragraph silence at boundaries
+        result = audio_parts[0]
+        for i, nxt in enumerate(audio_parts[1:]):
+            if i in paragraph_boundary_after:
+                # Paragraph boundary — insert long silence instead of crossfade
+                result = np.concatenate([result, paragraph_silence, nxt])
+            else:
+                cf = min(crossfade_samples, len(result), len(nxt))
+                if cf <= 0:
+                    result = np.concatenate([result, nxt])
+                else:
+                    fade_out = np.linspace(1.0, 0.0, cf, dtype=np.float32)
+                    fade_in = np.linspace(0.0, 1.0, cf, dtype=np.float32)
+                    overlap = result[-cf:] * fade_out + nxt[:cf] * fade_in
+                    result = np.concatenate([result[:-cf], overlap, nxt[cf:]])
+        return result
     else:
         silence = np.zeros(silence_samples, dtype=np.float32)
         pieces: List[np.ndarray] = []
         for i, part in enumerate(audio_parts):
             pieces.append(part)
             if i < len(audio_parts) - 1:
-                pieces.append(silence)
+                if i in paragraph_boundary_after:
+                    pieces.append(paragraph_silence)
+                else:
+                    pieces.append(silence)
         return np.concatenate(pieces, axis=0)
 
 

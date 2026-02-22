@@ -427,8 +427,13 @@ class EmotionClassifier:
 
     # ── sentence extraction ───────────────────────────────────────────────────
 
-    def _get_sentences(self, text: str) -> List[str]:
-        """Return sentences using the project segmenter (spaCy + pySBD).
+    def _get_sentences(self, text: str) -> tuple[List[str], set[int]]:
+        """Return (sentences, paragraph_break_indices) using the project segmenter.
+
+        Standalone ``...`` lines (paragraph break markers inserted by the
+        extraction step) are stripped from the sentence list.  The index of the
+        sentence *before* each ``...`` marker is recorded in the returned set so
+        that ``classify_text`` can upgrade its pause to "long".
 
         Orphan punctuation fragments (e.g. ``".`` left over after spaCy splits
         a dialogue sentence from its closing quote) are dropped — they contain
@@ -446,9 +451,20 @@ class EmotionClassifier:
         )
         seg = Segmenter(cfg)
         raw = seg.segment(text)
-        # Drop fragments that contain fewer than 3 alphabetic characters —
-        # these are orphan punctuation/quote artefacts, not real sentences.
-        return [s for s in raw if len(_re.findall(r"[A-Za-z]", s)) >= 3]
+
+        sentences: List[str] = []
+        paragraph_breaks: set[int] = set()
+        for s in raw:
+            if s.strip() == "...":
+                # Record the index of the last real sentence before this marker.
+                if sentences:
+                    paragraph_breaks.add(len(sentences) - 1)
+                continue
+            # Drop fragments that contain fewer than 3 alphabetic characters —
+            # these are orphan punctuation/quote artefacts, not real sentences.
+            if len(_re.findall(r"[A-Za-z]", s)) >= 3:
+                sentences.append(s)
+        return sentences, paragraph_breaks
 
     # ── single-sentence classification ───────────────────────────────────────
 
@@ -571,9 +587,11 @@ class EmotionClassifier:
         Returns:
             List of SentenceRecord with smoothed emotions.
         """
-        sentences = self._get_sentences(text)
+        sentences, paragraph_breaks = self._get_sentences(text)
         if head is not None:
             sentences = sentences[:head]
+            # Only keep paragraph breaks that fall within the truncated range
+            paragraph_breaks = {idx for idx in paragraph_breaks if idx < len(sentences)}
         n = len(sentences)
         if verbose:
             print(f"Classifying {n} sentences (emotion + pause) …")
@@ -641,6 +659,13 @@ class EmotionClassifier:
             except Exception as exc:
                 if verbose:
                     print(f"  [boundary detection skipped: {exc}]")
+
+        # Upgrade pause at paragraph break boundaries (from `...` markers)
+        for idx in paragraph_breaks:
+            if idx < len(raw_pause_labels):
+                raw_pause_labels[idx] = max(raw_pause_labels[idx], 3)  # at least "long"
+        if verbose and paragraph_breaks:
+            print(f"Paragraph breaks upgraded {len(paragraph_breaks)} pause label(s) to 'long'.")
 
         records: List[SentenceRecord] = []
         for i, (sentence, raw_emo, smoothed_emo, pause) in enumerate(

@@ -228,6 +228,27 @@ def create_app(
         worker.request_cancel(job_id)
         return jsonify({"ok": True, "prev_status": prev_status})
 
+    @app.route("/api/logs/<job_id>")
+    def api_logs(job_id):
+        job = queue.get_job(job_id)
+        if not job:
+            abort(404)
+        sd = _status_dir(job)
+        if not sd:
+            return jsonify({"log": ""}), 404
+        log_path = sd / "worker.log"
+        if not log_path.exists():
+            return jsonify({"log": ""}), 404
+        try:
+            text = log_path.read_text(errors="replace")
+        except Exception:
+            return jsonify({"log": ""}), 500
+        tail = request.args.get("tail", type=int)
+        if tail and tail > 0:
+            lines = text.splitlines()
+            text = "\n".join(lines[-tail:])
+        return jsonify({"log": text})
+
     # ── podcast routes ────────────────────────────────────────────────────────
 
     @app.route("/podcasts/<podcast_name>/feed")

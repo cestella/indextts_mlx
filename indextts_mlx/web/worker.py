@@ -256,6 +256,7 @@ class Worker(threading.Thread):
                 jid,
                 ["wget", "-q", "-O", str(epub_path), job["epub_url"]],
                 stage="downloading",
+                status_dir=status_dir,
             )
             if not epub_path.exists() or epub_path.stat().st_size == 0:
                 raise RuntimeError(f"Download failed or file is empty: {epub_path}")
@@ -295,7 +296,7 @@ class Worker(threading.Thread):
                 "--status",
                 str(status_dir),
             ]
-            self._run_proc(jid, direct_cmd, stage="directing")
+            self._run_proc(jid, direct_cmd, stage="directing", status_dir=status_dir)
 
         # ── 3. Synthesize chapters → mp3 ─────────────────────────────────────
         if not _should_skip("synthesizing"):
@@ -341,7 +342,7 @@ class Worker(threading.Thread):
                     synth_cmd += ["--voice", voice]
             elif voice:
                 synth_cmd += ["--spk-audio-prompt", voice]
-            self._run_proc(jid, synth_cmd, stage="synthesizing")
+            self._run_proc(jid, synth_cmd, stage="synthesizing", status_dir=status_dir)
 
         # ── 4. Package m4b ───────────────────────────────────────────────────
         if not _should_skip("packaging"):
@@ -361,6 +362,7 @@ class Worker(threading.Thread):
                     isbn,
                 ],
                 stage="packaging",
+                status_dir=status_dir,
             )
 
         # Find the produced m4b
@@ -415,6 +417,7 @@ class Worker(threading.Thread):
                         "--status", str(status_dir),
                     ],
                     stage="directing",
+                    status_dir=status_dir,
                 )
 
         # ── 2. Synthesizing ───────────────────────────────────────────────────
@@ -465,11 +468,11 @@ class Worker(threading.Thread):
                     synth_cmd += ["--voice", voice]
             elif voice:
                 synth_cmd += ["--spk-audio-prompt", voice]
-            self._run_proc(jid, synth_cmd, stage="synthesizing")
+            self._run_proc(jid, synth_cmd, stage="synthesizing", status_dir=status_dir)
 
         self.queue.update(jid, status=DONE, stage=None, finished_at=_now())
 
-    def _run_proc(self, job_id: str, args: list[str], stage: str):
+    def _run_proc(self, job_id: str, args: list[str], stage: str, status_dir: Path | None = None):
         proc = subprocess.Popen(
             args,
             stdout=subprocess.PIPE,
@@ -480,6 +483,17 @@ class Worker(threading.Thread):
         with self._proc_lock:
             self._current_proc = proc
 
+        # Open a persistent log file if we know where to write it
+        log_file = None
+        if status_dir is not None:
+            try:
+                status_dir.mkdir(parents=True, exist_ok=True)
+                log_file = open(status_dir / "worker.log", "a")
+                log_file.write(f"\n=== {stage} @ {_now()} ===\n")
+                log_file.flush()
+            except Exception:
+                log_file = None
+
         log_lines: list[str] = []
         for line in proc.stdout:
             line = line.rstrip()
@@ -487,9 +501,21 @@ class Worker(threading.Thread):
             # Keep only last 200 lines to avoid unbounded memory use
             if len(log_lines) > 200:
                 log_lines.pop(0)
+            if log_file is not None:
+                try:
+                    log_file.write(line + "\n")
+                    log_file.flush()
+                except Exception:
+                    pass
             if self._cancel_event.is_set():
                 proc.terminate()
                 break
+
+        if log_file is not None:
+            try:
+                log_file.close()
+            except Exception:
+                pass
 
         proc.wait()
         with self._proc_lock:

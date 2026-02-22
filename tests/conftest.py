@@ -25,11 +25,22 @@ def pytest_addoption(parser):
         default=False,
         help="Run timing benchmarks (test_bigvgan_alias_free_perf.py etc).",
     )
+    parser.addoption(
+        "--srv-integration",
+        action="store_true",
+        default=False,
+        help="Run tests marked @pytest.mark.srv_integration (loads real models; slow).",
+    )
 
 
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "llm: tests that load the real LLM (skipped by default; run with --llm)"
+    )
+    config.addinivalue_line(
+        "markers",
+        "srv_integration: srv integration tests that load real models "
+        "(skipped by default; run with --srv-integration)",
     )
 
 
@@ -44,6 +55,13 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if item.get_closest_marker("llm"):
                 item.add_marker(skip_llm)
+    if not config.getoption("--srv-integration"):
+        skip_srv = pytest.mark.skip(
+            reason="srv integration tests skipped by default; use --srv-integration to run"
+        )
+        for item in items:
+            if item.get_closest_marker("srv_integration"):
+                item.add_marker(skip_srv)
 
 
 @pytest.fixture(scope="session")

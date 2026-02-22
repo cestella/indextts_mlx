@@ -552,6 +552,22 @@
     }
   }
 
+  async function fetchJobLog(jobId, targetElId) {
+    const el = document.getElementById(targetElId);
+    if (!el) return;
+    if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+    el.textContent = 'Loading…';
+    el.style.display = 'block';
+    try {
+      const r = await fetch('/api/logs/' + jobId);
+      if (!r.ok) { el.textContent = '(no log available)'; return; }
+      const data = await r.json();
+      el.textContent = data.log || '(empty log)';
+    } catch(err) {
+      el.textContent = 'Error loading log: ' + err.message;
+    }
+  }
+
   // ── queue reorder ─────────────────────────────────────────────────────────
 
   async function moveJob(jobId, dir) {
@@ -976,9 +992,19 @@
     const epubLink = job.epub_path
       ? `<a class="download-link" href="/files/${esc(job.epub_path)}" download>⬇ EPUB</a>`
       : '';
-    const errNote = job.error
-      ? `<div style="font-size:0.7rem;color:var(--red);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${esc(job.error)}">${esc(job.error.split('\n')[0])}</div>`
-      : '';
+    const errId = 'err_' + uid;
+    let errNote = '';
+    if (job.error) {
+      const firstLine = job.error.split('\n')[0];
+      const hasMore = job.error.includes('\n');
+      errNote = `<div style="font-size:0.7rem;color:var(--red);margin-top:2px;">
+        <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;">${esc(firstLine)}</span>
+        ${hasMore ? `<a href="#" onclick="event.preventDefault();document.getElementById('${errId}').style.display=document.getElementById('${errId}').style.display==='none'?'block':'none'" style="color:var(--red);text-decoration:underline;font-size:0.65rem;">Show error details</a>` : ''}
+        <pre id="${errId}" style="display:none;max-height:200px;overflow:auto;background:var(--surface2);color:var(--red);padding:6px 8px;border-radius:4px;margin-top:4px;font-size:0.65rem;white-space:pre-wrap;word-break:break-word;">${esc(job.error)}</pre>
+        <a href="#" onclick="event.preventDefault();fetchJobLog('${esc(job.id)}','${errId}_log')" style="color:var(--text-dim);text-decoration:underline;font-size:0.65rem;">View full log</a>
+        <pre id="${errId}_log" style="display:none;max-height:300px;overflow:auto;background:var(--surface2);color:var(--text);padding:6px 8px;border-radius:4px;margin-top:4px;font-size:0.65rem;white-space:pre-wrap;word-break:break-word;"></pre>
+      </div>`;
+    }
 
     const row = `
       <div class="job-item" style="${canResume ? 'border-radius:0;border-bottom:none;' : ''}">
@@ -1092,15 +1118,18 @@
       const history = data.jobs.filter(j => !['queued','running'].includes(j.status))
                                .slice().reverse();
 
+      const _hasOpenPanel = (el) => el.querySelector('.resume-panel.open')
+        || el.querySelector('pre[id^="err_"][style*="display:block"], pre[id^="err_"][style*="display: block"]');
+
       const qList = document.getElementById('queue-list');
-      if (!qList.querySelector('.resume-panel.open')) {
+      if (!_hasOpenPanel(qList)) {
         qList.innerHTML = queued.length
           ? queued.map((j, i) => { const uid = 'q' + i; _jobRegistry[uid] = j; return renderJobItem(j, uid); }).join('')
           : '<div class="empty">No jobs queued.</div>';
       }
 
       const hList = document.getElementById('history-list');
-      if (!hList.querySelector('.resume-panel.open')) {
+      if (!_hasOpenPanel(hList)) {
         hList.innerHTML = history.length
           ? history.map((j, i) => { const uid = 'h' + i; _jobRegistry[uid] = j; return renderJobItem(j, uid); }).join('')
           : '<div class="empty">No completed jobs.</div>';

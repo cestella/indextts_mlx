@@ -121,6 +121,10 @@ def extract(
             flat = re.sub(r"  +", " ", flat)
             if not flat:
                 continue
+            # Insert a paragraph break marker before this paragraph's
+            # sentences (except before the very first paragraph).
+            if sentences:
+                sentences.append("...")
             # A paragraph that is itself a bare heading (single spaCy sentence,
             # no terminal punctuation) gets a period appended so TTS treats it
             # as a complete utterance rather than a dangling fragment.

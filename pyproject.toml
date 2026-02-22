@@ -26,6 +26,7 @@ dependencies = [
     "mutagen",
     "pyyaml",
     "apscheduler>=3.10,<4",
+    "setuptools>=68,<71",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +50,12 @@ convert = [
     "safetensors",
     "huggingface_hub",
 ]
+srv = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+    "httpx>=0.24",
+    "mlx-audio>=0.3",
+]
 
 [project.scripts]
 indextts = "cli.main:main"
@@ -66,4 +73,5 @@ include = '\.pyi?$'
 markers = [
     "parity: parity tests against reference implementations (skipped if deps missing)",
     "llm: tests that load the real LLM (skipped by default; run with --llm)",
+    "srv_integration: srv integration tests that load real models (skipped by default; run with --srv-integration)",
 ]

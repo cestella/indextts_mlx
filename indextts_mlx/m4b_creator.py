@@ -126,12 +126,21 @@ class M4bCreator:
         if not isbn_clean:
             raise ValueError(f"Invalid ISBN: {isbn}")
 
-        meta = isbnlib.meta(isbn_clean)
+        # Try multiple services — Google Books first, then Open Library, then Wikipedia
+        meta = None
+        last_err = None
+        for service in ("goob", "openl", "wiki"):
+            try:
+                meta = isbnlib.meta(isbn_clean, service=service)
+                if meta:
+                    break
+            except Exception as exc:
+                print(f"  {service} failed: {exc}")
+                last_err = exc
         if not meta:
-            raise ValueError(
-                f"Could not fetch metadata for ISBN: {isbn}. "
-                f"Please check the ISBN is correct and try again."
-            )
+            raise RuntimeError(
+                f"All ISBN metadata services failed for {isbn}: {last_err}"
+            ) from last_err
 
         description = ""
         try:
